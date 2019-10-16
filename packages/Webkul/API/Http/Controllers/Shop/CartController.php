@@ -88,7 +88,7 @@ class CartController extends Controller
     {
         Event::fire('checkout.cart.item.add.before', $id);
 
-        $result = Cart::add($id, request()->except('_token'));
+        $result = Cart::addProduct($id, request()->except('_token'));
 
         if (! $result) {
             $message = session()->get('warning') ?? session()->get('error');
@@ -129,7 +129,7 @@ class CartController extends Controller
 
             Event::fire('checkout.cart.item.update.before', $itemId);
 
-            Cart::updateItem($item->product_id, ['quantity' => $qty], $itemId);
+            Cart::updateItems(request()->all());
 
             Event::fire('checkout.cart.item.update.after', $item);
         }
