@@ -2,19 +2,16 @@
 
 namespace Webkul\Product\Helpers;
 
-/**
- * Product View Helper
- *
- * @author Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
-class View extends AbstractProduct
+use Webkul\Attribute\Repositories\AttributeOptionRepository;
+use Webkul\Product\Contracts\Product;
+
+class View
 {
     /**
      * Returns the visible custom attributes
      *
-     * @param Product $product
-     * @return integer
+     * @param  Product  $product
+     * @return void|array
      */
     public function getAdditionalData($product)
     {
@@ -22,32 +19,39 @@ class View extends AbstractProduct
 
         $attributes = $product->attribute_family->custom_attributes()->where('attributes.is_visible_on_front', 1)->get();
 
-        $attributeOptionReposotory = app('Webkul\Attribute\Repositories\AttributeOptionRepository');
+        $attributeOptionRepository = app(AttributeOptionRepository::class);
 
         foreach ($attributes as $attribute) {
-            if ($product instanceof \Webkul\Product\Models\ProductFlat) {
-                $value = $product->product->{$attribute->code};
-            } else {
-                $value = $product->{$attribute->code};
-            }
+            $value = $product->{$attribute->code};
 
             if ($attribute->type == 'boolean') {
                 $value = $value ? 'Yes' : 'No';
-            } else if($value) {
+            } elseif ($value) {
                 if ($attribute->type == 'select') {
-                    $attributeOption = $attributeOptionReposotory->find($value);
-                    if ($attributeOption)
-                        $value = $attributeOption->label ?? $attributeOption->admin_name;
-                } else if ($attribute->type == 'multiselect' || $attribute->type == 'checkbox') {
-                    $lables = [];
+                    $attributeOption = $attributeOptionRepository->find($value);
 
-                    $attributeOptions = $attributeOptionReposotory->findWhereIn('id', explode(",", $value));
+                    if ($attributeOption) {
+                        $value = $attributeOption->label ?? null;
+
+                        if (! $value) {
+                            continue;
+                        }
+                    }
+                } elseif (
+                    $attribute->type == 'multiselect'
+                    || $attribute->type == 'checkbox'
+                ) {
+                    $labels = [];
+
+                    $attributeOptions = $attributeOptionRepository->findWhereIn('id', explode(',', $value));
 
                     foreach ($attributeOptions as $attributeOption) {
-                        $lables[] = $attributeOption->label ?? $attributeOption->admin_name;
+                        if ($label = $attributeOption->label) {
+                            $labels[] = $label;
+                        }
                     }
 
-                    $value = implode(", ", $lables);
+                    $value = implode(', ', $labels);
                 }
             }
 

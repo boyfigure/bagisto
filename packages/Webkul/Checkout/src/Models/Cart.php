@@ -2,133 +2,205 @@
 
 namespace Webkul\Checkout\Models;
 
+use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Webkul\Product\Models\ProductProxy;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Webkul\Checkout\Contracts\Cart as CartContract;
+use Webkul\Checkout\Database\Factories\CartFactory;
+use Webkul\Core\Models\ChannelProxy;
+use Webkul\Customer\Models\CustomerProxy;
 
 class Cart extends Model implements CartContract
 {
-    protected $table = 'cart';
-
-    protected $guarded = ['id', 'created_at', 'updated_at'];
-
-    protected $hidden = ['coupon_code'];
-
-    protected $with = ['items', 'items.children'];
+    use HasFactory;
 
     /**
-     * To get relevant associated items with the cart instance
+     * The table associated with the model.
+     *
+     * @var string
      */
-    public function items() {
-        return $this->hasMany(CartItemProxy::modelClass())->whereNull('parent_id');
+    protected $table = 'cart';
+
+    /**
+     * The attributes that aren't mass assignable.
+     *
+     * @var array
+     */
+    protected $guarded = [
+        'id',
+        'created_at',
+        'updated_at',
+    ];
+
+    /**
+     * The attributes that should be cast.
+     *
+     * @var array
+     */
+    protected $casts = [
+        'additional' => 'json',
+        'is_guest' => 'boolean',
+        'is_active' => 'boolean',
+    ];
+
+    /**
+     * Get the customer record associated with the address.
+     */
+    public function customer(): BelongsTo
+    {
+        return $this->belongsTo(CustomerProxy::modelClass());
     }
 
     /**
-     * To get all the associated items with the cart instance even the parent and child items of configurable products
+     * Get the channel record associated with the address.
      */
-    public function all_items() {
+    public function channel(): BelongsTo
+    {
+        return $this->belongsTo(ChannelProxy::modelClass());
+    }
+
+    /**
+     * To get relevant associated items with the cart instance.
+     */
+    public function items(): HasMany
+    {
+        return $this->hasMany(CartItemProxy::modelClass())
+            ->whereNull('parent_id')
+            ->with(['child', 'children']);
+    }
+
+    /**
+     * To get all the associated items with the cart instance even the parent and child items of configurable products.
+     */
+    public function all_items(): HasMany
+    {
         return $this->hasMany(CartItemProxy::modelClass());
     }
 
     /**
-     * Get the addresses for the cart.
+     * Get the billing address for the cart.
      */
-    public function addresses()
+    public function billing_address(): HasOne
     {
-        return $this->hasMany(CartAddressProxy::modelClass());
-    }
-
-    /**
-     * Get the biling address for the cart.
-     */
-    public function billing_address()
-    {
-        return $this->addresses()->where('address_type', 'billing');
-    }
-
-    /**
-     * Get billing address for the cart.
-     */
-    public function getBillingAddressAttribute()
-    {
-        return $this->billing_address()->first();
+        return $this->hasOne(CartAddressProxy::modelClass())->where('address_type', CartAddress::ADDRESS_TYPE_BILLING);
     }
 
     /**
      * Get the shipping address for the cart.
      */
-    public function shipping_address()
+    public function shipping_address(): HasOne
     {
-        return $this->addresses()->where('address_type', 'shipping');
-    }
-
-    /**
-     * Get shipping address for the cart.
-     */
-    public function getShippingAddressAttribute()
-    {
-        return $this->shipping_address()->first();
+        return $this->hasOne(CartAddressProxy::modelClass())->where('address_type', CartAddress::ADDRESS_TYPE_SHIPPING);
     }
 
     /**
      * Get the shipping rates for the cart.
      */
-    public function shipping_rates()
+    public function shipping_rates(): HasMany
     {
-        return $this->hasManyThrough(CartShippingRateProxy::modelClass(), CartAddressProxy::modelClass(), 'cart_id', 'cart_address_id');
+        return $this->hasMany(CartShippingRateProxy::modelClass());
     }
 
     /**
-     * Get all of the attributes for the attribute groups.
+     * Get all the attributes for the attribute groups.
      */
     public function selected_shipping_rate()
     {
-        return $this->shipping_rates()->where('method', $this->shipping_method);
+        return $this->shipping_rates
+            ->where('method', $this->shipping_method);
     }
 
     /**
-     * Get all of the attributes for the attribute groups.
+     * Get all the attributes for the attribute groups.
      */
     public function getSelectedShippingRateAttribute()
     {
-        return $this->selected_shipping_rate()->where('method', $this->shipping_method)->first();
+        return $this->selected_shipping_rate()
+            ->first();
     }
 
     /**
      * Get the payment associated with the cart.
      */
-    public function payment()
+    public function payment(): HasOne
     {
         return $this->hasOne(CartPaymentProxy::modelClass());
     }
 
     /**
-     * Checks if cart have stockable items
-     *
-     * @return boolean
+     * Checks if cart have stockable items.
      */
-    public function haveStockableItems()
+    public function haveStockableItems(): bool
     {
         foreach ($this->items as $item) {
-            if ($item->product->isStockable())
+            if ($item->product->isStockable()) {
                 return true;
+            }
         }
 
         return false;
     }
 
     /**
-     * Checks if cart have downloadable items
-     *
-     * @return boolean
+     * Checks if cart has only stockable items.
      */
-    public function haveDownloadableItems()
+    public function hasOnlyStockableItems(): bool
     {
         foreach ($this->items as $item) {
-            if ($item->type == 'downloadable')
+            if (! $item->product->isStockable()) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Checks if cart has downloadable items.
+     */
+    public function hasDownloadableItems(): bool
+    {
+        return $this->items->pluck('type')->contains('downloadable');
+    }
+
+    /**
+     * Returns true if cart contains one or many products with quantity box.
+     *
+     * (For Example: simple, configurable, virtual)
+     */
+    public function hasProductsWithQuantityBox(): bool
+    {
+        foreach ($this->items as $item) {
+            if ($item->getTypeInstance()->showQuantityBox()) {
                 return true;
+            }
         }
 
         return false;
+    }
+
+    /**
+     * Checks if cart has items that allow guest checkout.
+     */
+    public function hasGuestCheckoutItems(): bool
+    {
+        foreach ($this->items as $item) {
+            if (! $item->product->getAttribute('guest_checkout')) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Create a new factory instance for the model.
+     */
+    protected static function newFactory(): Factory
+    {
+        return CartFactory::new();
     }
 }

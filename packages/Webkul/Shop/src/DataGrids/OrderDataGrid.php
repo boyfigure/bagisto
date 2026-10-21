@@ -2,95 +2,150 @@
 
 namespace Webkul\Shop\DataGrids;
 
-use Webkul\Ui\DataGrid\DataGrid;
-use DB;
+use Illuminate\Support\Facades\DB;
+use Webkul\DataGrid\DataGrid;
+use Webkul\Sales\Models\Order;
 
-/**
- * OrderDataGrid class
- *
- * @author Rahul Shukla <rahulshkla.symfont517@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class OrderDataGrid extends DataGrid
 {
-    protected $index = 'id'; //the column that needs to be treated as index column
-
-    protected $sortOrder = 'desc'; //asc or desc
-
+    /**
+     * Prepare query builder.
+     *
+     * @return void
+     */
     public function prepareQueryBuilder()
     {
-        $queryBuilder = DB::table('orders as order')
-                ->addSelect('order.id', 'order.increment_id', 'order.status', 'order.created_at', 'order.grand_total', 'order.order_currency_code')
-                ->where('customer_id', auth()->guard('customer')->user()->id);
+        $queryBuilder = DB::table('orders')
+            ->addSelect(
+                'orders.id',
+                'orders.increment_id',
+                'orders.status',
+                'orders.created_at',
+                'orders.grand_total',
+                'orders.order_currency_code'
+            )
+            ->where('customer_id', auth()->guard('customer')->user()->id);
 
-        $this->setQueryBuilder($queryBuilder);
+        return $queryBuilder;
     }
 
-    public function addColumns()
+    /**
+     * Add columns.
+     *
+     * @return void
+     */
+    public function prepareColumns()
     {
         $this->addColumn([
             'index' => 'increment_id',
-            'label' => trans('shop::app.customer.account.order.index.order_id'),
+            'label' => trans('shop::app.customers.account.orders.order-id'),
             'type' => 'string',
-            'searchable' => false,
+            'searchable' => true,
+            'filterable' => true,
             'sortable' => true,
-            'filterable' => true
         ]);
 
         $this->addColumn([
             'index' => 'created_at',
-            'label' => trans('shop::app.customer.account.order.index.date'),
-            'type' => 'datetime',
+            'label' => trans('shop::app.customers.account.orders.order-date'),
+            'type' => 'date',
             'searchable' => true,
+            'filterable' => true,
+            'filterable_type' => 'date_range',
             'sortable' => true,
-            'filterable' => true
         ]);
 
         $this->addColumn([
             'index' => 'grand_total',
-            'label' => trans('shop::app.customer.account.order.index.total'),
-            'type' => 'number',
+            'label' => trans('shop::app.customers.account.orders.total'),
+            'type' => 'decimal',
             'searchable' => true,
-            'sortable' => true,
             'filterable' => true,
-            'wrapper' => function ($value) {
-                return core()->formatPrice($value->grand_total, $value->order_currency_code);
-            }
+            'sortable' => true,
+            'closure' => function ($row) {
+                return core()->formatPrice($row->grand_total, $row->order_currency_code);
+            },
         ]);
 
         $this->addColumn([
             'index' => 'status',
-            'label' => trans('shop::app.customer.account.order.index.status'),
+            'label' => trans('shop::app.customers.account.orders.status.title'),
             'type' => 'string',
-            'searchable' => false,
+            'searchable' => true,
+            'filterable' => true,
+            'filterable_type' => 'dropdown',
+            'filterable_options' => [
+                [
+                    'label' => trans('shop::app.customers.account.orders.status.options.processing'),
+                    'value' => Order::STATUS_PROCESSING,
+                ],
+                [
+                    'label' => trans('shop::app.customers.account.orders.status.options.completed'),
+                    'value' => Order::STATUS_COMPLETED,
+                ],
+                [
+                    'label' => trans('shop::app.customers.account.orders.status.options.canceled'),
+                    'value' => Order::STATUS_CANCELED,
+                ],
+                [
+                    'label' => trans('shop::app.customers.account.orders.status.options.closed'),
+                    'value' => Order::STATUS_CLOSED,
+                ],
+                [
+                    'label' => trans('shop::app.customers.account.orders.status.options.pending'),
+                    'value' => Order::STATUS_PENDING,
+                ],
+                [
+                    'label' => trans('shop::app.customers.account.orders.status.options.pending-payment'),
+                    'value' => Order::STATUS_PENDING_PAYMENT,
+                ],
+                [
+                    'label' => trans('shop::app.customers.account.orders.status.options.fraud'),
+                    'value' => Order::STATUS_FRAUD,
+                ],
+            ],
             'sortable' => true,
-            'closure' => true,
-            'wrapper' => function ($value) {
-                if ($value->status == 'processing')
-                    return '<span class="badge badge-md badge-success">Processing</span>';
-                else if ($value->status == 'completed')
-                    return '<span class="badge badge-md badge-success">Completed</span>';
-                else if ($value->status == "canceled")
-                    return '<span class="badge badge-md badge-danger">Canceled</span>';
-                else if ($value->status == "closed")
-                    return '<span class="badge badge-md badge-info">Closed</span>';
-                else if ($value->status == "pending")
-                    return '<span class="badge badge-md badge-warning">Pending</span>';
-                else if ($value->status == "pending_payment")
-                    return '<span class="badge badge-md badge-warning">Pending Payment</span>';
-                else if ($value->status == "fraud")
-                    return '<span class="badge badge-md badge-danger">Fraud</span>';
+            'closure' => function ($row) {
+                switch ($row->status) {
+                    case Order::STATUS_PROCESSING:
+                        return '<p class="label-processing">'.trans('shop::app.customers.account.orders.status.options.processing').'</p>';
+
+                    case Order::STATUS_COMPLETED:
+                        return '<p class="label-active">'.trans('shop::app.customers.account.orders.status.options.completed').'</p>';
+
+                    case Order::STATUS_CANCELED:
+                        return '<p class="label-canceled">'.trans('shop::app.customers.account.orders.status.options.canceled').'</p>';
+
+                    case Order::STATUS_CLOSED:
+                        return '<p class="label-closed">'.trans('shop::app.customers.account.orders.status.options.closed').'</p>';
+
+                    case Order::STATUS_PENDING:
+                        return '<p class="label-pending">'.trans('shop::app.customers.account.orders.status.options.pending').'</p>';
+
+                    case Order::STATUS_PENDING_PAYMENT:
+                        return '<p class="label-pending">'.trans('shop::app.customers.account.orders.status.options.pending-payment').'</p>';
+
+                    case Order::STATUS_FRAUD:
+                        return '<p class="label-canceled">'.trans('shop::app.customers.account.orders.status.options.fraud').'</p>';
+                }
             },
-            'filterable' => true
         ]);
     }
 
-    public function prepareActions() {
+    /**
+     * Prepare actions.
+     *
+     * @return void
+     */
+    public function prepareActions()
+    {
         $this->addAction([
-            'type' => 'View',
+            'icon' => 'icon-eye',
+            'title' => trans('shop::app.customers.account.orders.action-view'),
             'method' => 'GET',
-            'route' => 'customer.orders.view',
-            'icon' => 'icon eye-icon'
+            'url' => function ($row) {
+                return route('shop.customers.account.orders.view', $row->id);
+            },
         ]);
     }
 }

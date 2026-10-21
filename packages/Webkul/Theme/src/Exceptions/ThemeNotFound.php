@@ -1,8 +1,17 @@
-<?php namespace Webkul\Theme\Exceptions;
+<?php
 
-class ThemeNotFound extends \Exception {
+namespace Webkul\Theme\Exceptions;
 
-	public function __construct($themeName) {
-		parent::__construct("Theme $themeName not Found", 1);
-	}
+class ThemeNotFound extends \Exception
+{
+    /**
+     * Create an instance.
+     *
+     * @param  string  $themeName
+     * @return void
+     */
+    public function __construct($themeName)
+    {
+        parent::__construct("Theme $themeName not Found", 1);
+    }
 }

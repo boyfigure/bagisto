@@ -2,103 +2,138 @@
 
 namespace Webkul\Shop\DataGrids;
 
-use Webkul\Ui\DataGrid\DataGrid;
-use DB;
+use Illuminate\Support\Facades\DB;
+use Webkul\DataGrid\DataGrid;
 
-/**
- * DownloadableProduct DataGrid class
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class DownloadableProductDataGrid extends DataGrid
 {
-    protected $index = 'id';
+    /**
+     * Downloadable Product status Expired.
+     */
+    const STATUS_EXPIRED = 'expired';
 
-    protected $sortOrder = 'desc';
+    /**
+     * Downloadable Product status Pending.
+     */
+    const STATUS_PENDING = 'pending';
 
+    /**
+     * Downloadable Product status Available
+     */
+    const STATUS_AVAILABLE = 'available';
+
+    /**
+     * Prepare query builder.
+     *
+     * @return void
+     */
     public function prepareQueryBuilder()
     {
         $queryBuilder = DB::table('downloadable_link_purchased')
-                ->leftJoin('orders', 'downloadable_link_purchased.order_id', '=', 'orders.id')
-                ->addSelect('downloadable_link_purchased.*', 'orders.increment_id')
-                ->addSelect(DB::raw('(downloadable_link_purchased.download_bought - downloadable_link_purchased.download_used) as remaining_downloads'))
-                ->where('downloadable_link_purchased.customer_id', auth()->guard('customer')->user()->id);
+            ->distinct()
+            ->leftJoin('orders', 'downloadable_link_purchased.order_id', '=', 'orders.id')
+            ->leftJoin('invoices', 'downloadable_link_purchased.order_id', '=', 'invoices.order_id')
+            ->addSelect('downloadable_link_purchased.*', 'invoices.state as invoice_state', 'orders.increment_id')
+            ->addSelect(DB::raw('('.DB::getTablePrefix().'downloadable_link_purchased.download_bought - '.DB::getTablePrefix().'downloadable_link_purchased.download_canceled - '.DB::getTablePrefix().'downloadable_link_purchased.download_used) as remaining_downloads'))
+            ->where('downloadable_link_purchased.customer_id', auth()->guard('customer')->user()->id);
 
         $this->addFilter('status', 'downloadable_link_purchased.status');
         $this->addFilter('created_at', 'downloadable_link_purchased.created_at');
+        $this->addFilter('increment_id', 'orders.increment_id');
 
-        $this->setQueryBuilder($queryBuilder);
+        return $queryBuilder;
     }
 
-    public function addColumns()
+    /**
+     * Add columns.
+     *
+     * @return void
+     */
+    public function prepareColumns()
     {
         $this->addColumn([
             'index' => 'increment_id',
-            'label' => trans('shop::app.customer.account.downloadable_products.order-id'),
+            'label' => trans('shop::app.customers.account.downloadable-products.orderId'),
             'type' => 'string',
-            'searchable' => false,
+            'filterable' => true,
             'sortable' => true,
-            'filterable' => true
         ]);
 
         $this->addColumn([
             'index' => 'product_name',
-            'label' => trans('shop::app.customer.account.downloadable_products.name'),
+            'label' => trans('shop::app.customers.account.downloadable-products.title'),
             'type' => 'string',
             'searchable' => true,
-            'sortable' => true,
             'filterable' => true,
-            'closure' => true,
-            'wrapper' => function ($value) {
-                if ($value->status == 'pending' || $value->status == 'expired') {
-                    return $value->product_name;
-                } else {
-                    return $value->product_name . ' ' . '<a href="' . route('customer.downloadable_products.download', $value->id) . '" target="_blank">' . $value->name . '</a>';
+            'sortable' => true,
+            'closure' => function ($row) {
+                if (
+                    $row->status == 'pending'
+                    || $row->status == 'expired'
+                    || $row->invoice_state !== 'paid'
+                ) {
+                    return e($row->product_name);
                 }
+
+                return '<a class="text-blue-600" href="'.route('shop.customers.account.downloadable_products.download', $row->id).'" target="_blank">'.e($row->product_name).'</a>';
             },
         ]);
 
         $this->addColumn([
             'index' => 'created_at',
-            'label' => trans('shop::app.customer.account.downloadable_products.date'),
-            'type' => 'datetime',
-            'searchable' => false,
+            'label' => trans('shop::app.customers.account.downloadable-products.date'),
+            'type' => 'date',
+            'filterable' => true,
+            'filterable_type' => 'date_range',
             'sortable' => true,
-            'filterable' => true
         ]);
 
         $this->addColumn([
             'index' => 'status',
-            'label' => trans('shop::app.customer.account.downloadable_products.status'),
+            'label' => trans('shop::app.customers.account.downloadable-products.status'),
             'type' => 'string',
-            'searchable' => false,
-            'sortable' => true,
             'filterable' => true,
-            'closure' => true,
-            'wrapper' => function ($value) {
-                if ($value->status == 'pending')
-                    return trans('shop::app.customer.account.downloadable_products.pending');
-                else if ($value->status == 'available')
-                    return trans('shop::app.customer.account.downloadable_products.available');
-                else if ($value->status == 'expired')
-                    return trans('shop::app.customer.account.downloadable_products.expired');
+            'filterable_type' => 'dropdown',
+            'filterable_options' => [
+                [
+                    'label' => trans('shop::app.customers.account.downloadable-products.expired'),
+                    'value' => self::STATUS_EXPIRED,
+                ],
+                [
+                    'label' => trans('shop::app.customers.account.downloadable-products.pending'),
+                    'value' => self::STATUS_PENDING,
+                ],
+                [
+                    'label' => trans('shop::app.customers.account.downloadable-products.available'),
+                    'value' => self::STATUS_AVAILABLE,
+                ],
+            ],
+            'sortable' => true,
+            'closure' => function ($row) {
+                switch ($row->status) {
+                    case self::STATUS_EXPIRED:
+                        return '<p class="label-closed">'.trans('shop::app.customers.account.downloadable-products.expired').'</p>';
+
+                    case self::STATUS_PENDING:
+                        return '<p class="label-pending">'.trans('shop::app.customers.account.downloadable-products.pending').'</p>';
+
+                    case self::STATUS_AVAILABLE:
+                        return '<p class="label-active">'.trans('shop::app.customers.account.downloadable-products.available').'</p>';
+                }
             },
         ]);
 
         $this->addColumn([
             'index' => 'remaining_downloads',
-            'label' => trans('shop::app.customer.account.downloadable_products.remaining-downloads'),
-            'type' => 'datetime',
-            'searchable' => false,
+            'label' => trans('shop::app.customers.account.downloadable-products.remaining-downloads'),
+            'type' => 'integer',
             'sortable' => true,
-            'filterable' => false,
-            'closure' => true,
-            'wrapper' => function ($value) {
-                if (! $value->download_bought)
-                    return trans('shop::app.customer.account.downloadable_products.unlimited');
-                
-                return $value->remaining_downloads;
+            'closure' => function ($row) {
+                if (! $row->download_bought) {
+                    return trans('shop::app.customers.account.downloadable-products.unlimited');
+                }
+
+                return $row->remaining_downloads;
             },
         ]);
     }

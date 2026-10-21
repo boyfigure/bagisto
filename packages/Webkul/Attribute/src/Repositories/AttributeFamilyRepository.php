@@ -2,148 +2,120 @@
 
 namespace Webkul\Attribute\Repositories;
 
+use Illuminate\Container\Container;
+use Illuminate\Support\Str;
+use Webkul\Attribute\Contracts\AttributeFamily;
 use Webkul\Core\Eloquent\Repository;
-use Illuminate\Support\Facades\Event;
-use Webkul\Attribute\Repositories\AttributeRepository;
-use Webkul\Attribute\Repositories\AttributeGroupRepository;
-use Illuminate\Container\Container as App;
 
-/**
- * Attribute Reposotory
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class AttributeFamilyRepository extends Repository
 {
     /**
-     * AttributeRepository object
+     * Create a new repository instance.
      *
-     * @var Object
-     */
-    protected $attributeRepository;
-
-    /**
-     * AttributeGroupRepository object
-     *
-     * @var Object
-     */
-    protected $attributeGroupRepository;
-
-    /**
-     * Create a new controller instance.
-     *
-     * @param  Webkul\Attribute\Repositories\AttributeRepository      $attributeRepository
-     * @param  Webkul\Attribute\Repositories\AttributeGroupRepository $attributeGroupRepository
      * @return void
      */
     public function __construct(
-        AttributeRepository $attributeRepository,
-        AttributeGroupRepository $attributeGroupRepository,
-        App $app
-    )
-    {
-        $this->attributeRepository = $attributeRepository;
-
-        $this->attributeGroupRepository = $attributeGroupRepository;
-
-        parent::__construct($app);
+        protected AttributeRepository $attributeRepository,
+        protected AttributeGroupRepository $attributeGroupRepository,
+        Container $container
+    ) {
+        parent::__construct($container);
     }
 
     /**
-     * Specify Model class name
-     *
-     * @return mixed
+     * Specify the model class name.
      */
-    function model()
+    public function model(): string
     {
-        return 'Webkul\Attribute\Contracts\AttributeFamily';
+        return AttributeFamily::class;
     }
 
     /**
-     * @param array $data
-     * @return mixed
+     * Create an attribute family with its groups and their attributes.
+     *
+     * @return AttributeFamily
      */
     public function create(array $data)
     {
-        Event::fire('catalog.attribute_family.create.before');
+        $attributeGroups = $data['attribute_groups'] ?? [];
 
-        $attributeGroups = isset($data['attribute_groups']) ? $data['attribute_groups'] : [];
         unset($data['attribute_groups']);
-        $family = $this->model->create($data);
+
+        $family = parent::create($data);
 
         foreach ($attributeGroups as $group) {
-            $custom_attributes = isset($group['custom_attributes']) ? $group['custom_attributes'] : [];
+            $customAttributes = $group['custom_attributes'] ?? [];
+
             unset($group['custom_attributes']);
+
             $attributeGroup = $family->attribute_groups()->create($group);
 
-            foreach ($custom_attributes as $key => $attribute) {
-                if (isset($attribute['id'])) {
-                    $attributeModel = $this->attributeRepository->find($attribute['id']);
-                } else {
-                    $attributeModel = $this->attributeRepository->findOneByField('code', $attribute['code']);
-                }
+            foreach ($customAttributes as $key => $attribute) {
+                $attributeModel = isset($attribute['id'])
+                    ? $this->attributeRepository->find($attribute['id'])
+                    : $this->attributeRepository->findOneByField('code', $attribute['code']);
 
                 $attributeGroup->custom_attributes()->save($attributeModel, ['position' => $key + 1]);
             }
         }
 
-        Event::fire('catalog.attribute_family.create.after', $family);
-
         return $family;
     }
 
     /**
-     * @param array $data
-     * @param $id
-     * @param string $attribute
-     * @return mixed
+     * Update an attribute family, replacing the groups and attributes it holds.
+     *
+     * @param  int  $id
+     * @return AttributeFamily
      */
-    public function update(array $data, $id, $attribute = "id")
+    public function update(array $data, $id)
     {
-        $family = $this->find($id);
-
-        Event::fire('catalog.attribute_family.update.before', $id);
-
-        $family->update($data);
+        $family = parent::update($data, $id);
 
         $previousAttributeGroupIds = $family->attribute_groups()->pluck('id');
 
-        if (isset($data['attribute_groups'])) {
-            foreach ($data['attribute_groups'] as $attributeGroupId => $attributeGroupInputs) {
-                if (str_contains($attributeGroupId, 'group_')) {
-                    $attributeGroup = $family->attribute_groups()->create($attributeGroupInputs);
+        foreach ($data['attribute_groups'] ?? [] as $attributeGroupId => $attributeGroupInputs) {
+            if (Str::contains($attributeGroupId, 'group_')) {
+                $attributeGroup = $family->attribute_groups()->create($attributeGroupInputs);
 
-                    if (isset($attributeGroupInputs['custom_attributes'])) {
-                        foreach ($attributeGroupInputs['custom_attributes'] as $key => $attribute) {
-                            $attributeModel = $this->attributeRepository->find($attribute['id']);
-                            $attributeGroup->custom_attributes()->save($attributeModel, ['position' => $key + 1]);
-                        }
+                if (empty($attributeGroupInputs['custom_attributes'])) {
+                    continue;
+                }
+
+                foreach ($attributeGroupInputs['custom_attributes'] as $attributeInputs) {
+                    $attribute = $this->attributeRepository->find($attributeInputs['id']);
+
+                    $attributeGroup->custom_attributes()->save($attribute, [
+                        'position' => $attributeInputs['position'],
+                    ]);
+                }
+            } else {
+                if (is_numeric($index = $previousAttributeGroupIds->search($attributeGroupId))) {
+                    $previousAttributeGroupIds->forget($index);
+                }
+
+                $attributeGroup = $this->attributeGroupRepository->update($attributeGroupInputs, $attributeGroupId);
+
+                $previousAttributeIds = $attributeGroup->custom_attributes()->get()->pluck('id');
+
+                foreach ($attributeGroupInputs['custom_attributes'] ?? [] as $attributeInputs) {
+                    if (is_numeric($index = $previousAttributeIds->search($attributeInputs['id']))) {
+                        $previousAttributeIds->forget($index);
+
+                        $attributeGroup->custom_attributes()->updateExistingPivot($attributeInputs['id'], [
+                            'position' => $attributeInputs['position'],
+                        ]);
+                    } else {
+                        $attribute = $this->attributeRepository->find($attributeInputs['id']);
+
+                        $attributeGroup->custom_attributes()->save($attribute, [
+                            'position' => $attributeInputs['position'],
+                        ]);
                     }
-                } else {
-                    if (is_numeric($index = $previousAttributeGroupIds->search($attributeGroupId))) {
-                        $previousAttributeGroupIds->forget($index);
-                    }
+                }
 
-                    $attributeGroup = $this->attributeGroupRepository->find($attributeGroupId);
-                    $attributeGroup->update($attributeGroupInputs);
-
-                    $attributeIds = $attributeGroup->custom_attributes()->get()->pluck('id');
-
-                    if (isset($attributeGroupInputs['custom_attributes'])) {
-                        foreach ($attributeGroupInputs['custom_attributes'] as $key => $attribute) {
-                            if (is_numeric($index = $attributeIds->search($attribute['id']))) {
-                                $attributeIds->forget($index);
-                            } else {
-                                $attributeModel = $this->attributeRepository->find($attribute['id']);
-                                $attributeGroup->custom_attributes()->save($attributeModel, ['position' => $key + 1]);
-                            }
-                        }
-                    }
-
-                    if ($attributeIds->count()) {
-                        $attributeGroup->custom_attributes()->detach($attributeIds);
-                    }
+                if ($previousAttributeIds->count()) {
+                    $attributeGroup->custom_attributes()->detach($previousAttributeIds);
                 }
             }
         }
@@ -152,22 +124,29 @@ class AttributeFamilyRepository extends Repository
             $this->attributeGroupRepository->delete($attributeGroupId);
         }
 
-        Event::fire('catalog.attribute_family.update.after', $family);
-
         return $family;
     }
 
+    /**
+     * The id and name of every attribute family, for a select control.
+     *
+     * @return array
+     */
     public function getPartial()
     {
         $attributeFamilies = $this->model->all();
-        $trimmed = array();
+
+        $trimmed = [];
 
         foreach ($attributeFamilies as $key => $attributeFamily) {
-            if ($attributeFamily->name != null || $attributeFamily->name != "") {
+            if (
+                $attributeFamily->name != null
+                || $attributeFamily->name != ''
+            ) {
                 $trimmed[$key] = [
                     'id' => $attributeFamily->id,
                     'code' => $attributeFamily->code,
-                    'name' => $attributeFamily->name
+                    'name' => $attributeFamily->name,
                 ];
             }
         }
@@ -176,15 +155,17 @@ class AttributeFamilyRepository extends Repository
     }
 
     /**
-     * @param $id
-     * @return void
+     * Get all the comparable attributes which belongs to attribute family.
      */
-    public function delete($id)
+    public function getComparableAttributesBelongsToFamily()
     {
-        Event::fire('catalog.attribute_family.delete.before', $id);
-
-        parent::delete($id);
-
-        Event::fire('catalog.attribute_family.delete.after', $id);
+        return $this->attributeRepository
+            ->with(['options', 'options.translations'])
+            ->join('attribute_group_mappings', 'attribute_group_mappings.attribute_id', '=', 'attributes.id')
+            ->select('attributes.*')
+            ->where('attributes.is_comparable', 1)
+            ->whereNotIn('code', ['name', 'price'])
+            ->distinct()
+            ->get();
     }
 }

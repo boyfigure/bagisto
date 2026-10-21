@@ -2,24 +2,16 @@
 
 namespace Webkul\Attribute\Repositories;
 
+use Webkul\Attribute\Contracts\AttributeGroup;
 use Webkul\Core\Eloquent\Repository;
 
-/**
- * Attribute Group Reposotory
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class AttributeGroupRepository extends Repository
 {
-
     /**
-     * Specify Model class name
-     *
-     * @return mixed
+     * Specify the model class name.
      */
-    function model()
+    public function model(): string
     {
-        return 'Webkul\Attribute\Contracts\AttributeGroup';
+        return AttributeGroup::class;
     }
 }

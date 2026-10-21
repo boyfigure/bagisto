@@ -1,97 +1,157 @@
-require("./bootstrap");
+/**
+ * This will track all the images and fonts for publishing.
+ */
+import.meta.glob(["../images/**", "../fonts/**"]);
 
-window.Vue = require("vue");
-window.VeeValidate = require("vee-validate");
+/**
+ * Main vue bundler.
+ */
+import { createApp } from "vue/dist/vue.esm-bundler";
 
-Vue.use(VeeValidate);
-Vue.prototype.$http = axios
+/**
+ * Main root application registry.
+ */
+window.app = createApp({
+    data() {
+        return {};
+    },
 
-window.eventBus = new Vue();
+    methods: {
+        onSubmit() {},
 
-$(document).ready(function () {
-    Vue.config.ignoredElements = [
-        'option-wrapper',
-        'group-form',
-        'group-list'
-    ];
+        onInvalidSubmit({ values, errors, results }) {
+            setTimeout(() => {
+                const errorKeys = Object.entries(errors)
+                    .map(([key, value]) => ({ key, value }))
+                    .filter(error => error["value"].length);
 
-    var app = new Vue({
-        el: "#app",
+                if (errorKeys.length > 0) {
+                    const errorKey = errorKeys[0]["key"];
 
-        data: {
-            modalIds: {}
-        },
-
-        mounted() {
-            this.addServerErrors();
-            this.addFlashMessages();
-        },
-
-        methods: {
-            onSubmit: function (e) {
-                this.toggleButtonDisable(true);
-
-                if(typeof tinyMCE !== 'undefined')
-                    tinyMCE.triggerSave();
-
-                this.$validator.validateAll().then(result => {
-                    if (result) {
-                        e.target.submit();
-                    } else {
-                        this.toggleButtonDisable(false);
-
-                        eventBus.$emit('onFormError')
+                    let scrollTarget = null;
+                    
+                    // Try to find the input element with the exact name first.
+                    let firstErrorElement = document.querySelector('[name="' + errorKey + '"]');
+                    
+                    // If not found and the key doesn't end with [], try with the [] suffix (for array fields like categories[], channels[]).
+                    if (
+                        ! firstErrorElement 
+                        && ! errorKey.endsWith('[]')
+                    ) {
+                        firstErrorElement = document.querySelector('[name="' + errorKey + '[]"]');
                     }
-                });
-            },
+                    
+                    // If still not found, try to find any element that starts with this name (for nested fields).
+                    if (! firstErrorElement) {
+                        firstErrorElement = document.querySelector('[name^="' + errorKey + '"]');
+                    }
 
-            toggleButtonDisable (value) {
-                var buttons = document.getElementsByTagName("button");
+                    // If we found the input element.
+                    if (firstErrorElement) {
+                        // Check if this is a TinyMCE textarea (hidden by TinyMCE).
+                        if (firstErrorElement.tagName === 'TEXTAREA' && firstErrorElement.style.display === 'none') {
+                            // Find the TinyMCE editor container.
+                            const editorId = firstErrorElement.id;
 
-                for (var i = 0; i < buttons.length; i++) {
-                    buttons[i].disabled = value;
-                }
-            },
-
-            addServerErrors(scope = null) {
-                for (var key in serverErrors) {
-                    var inputNames = [];
-                    key.split('.').forEach(function(chunk, index) {
-                        if(index) {
-                            inputNames.push('[' + chunk + ']')
+                            const tinyMCEContainer = document.querySelector('#' + editorId + '_parent');
+                            
+                            if (tinyMCEContainer) {
+                                scrollTarget = tinyMCEContainer;
+                            } else {
+                                scrollTarget = firstErrorElement;
+                            }
                         } else {
-                            inputNames.push(chunk)
+                            scrollTarget = firstErrorElement;
                         }
-                    })
+                    } else {
+                        // If the input is not found, try to find the error message element itself.
+                        // VeeValidate renders error messages with a v-error-message component having a name attribute.
+                        const errorMessageElement = document.querySelector('[name="' + errorKey + '"] p, [name="' + errorKey + '[]"] p');
+                        
+                        if (errorMessageElement) {
+                            // Scroll to the parent container of the error message.
+                            scrollTarget = errorMessageElement.closest('.box-shadow') || errorMessageElement.closest('div[class*="bg-white"]') || errorMessageElement;
+                        }
+                    }
 
-                    var inputName = inputNames.join('');
+                    if (scrollTarget) {
+                        scrollTarget.scrollIntoView({
+                            behavior: "smooth",
+                            block: "center"
+                        });
+                        
+                        // Try to focus the element: for TinyMCE, focus the editor; for regular inputs, focus the input.
+                        if (firstErrorElement) {
+                            if (firstErrorElement.tagName === 'TEXTAREA' && firstErrorElement.style.display === 'none') {
+                                // Focus the TinyMCE editor if available.
+                                const editorId = firstErrorElement.id;
 
-                    const field = this.$validator.fields.find({
-                        name: inputName,
-                        scope: scope
-                    });
-                    if (field) {
-                        this.$validator.errors.add({
-                            id: field.id,
-                            field: inputName,
-                            msg: serverErrors[key][0],
-                            scope: scope
+                                if (window.tinymce && tinymce.get(editorId)) {
+                                    tinymce.get(editorId).focus();
+                                }
+                            } else if (firstErrorElement.focus) {
+                                firstErrorElement.focus();
+                            }
+                        }
+                    } else {
+                        // If the scroll target is not found, show a flash message with all errors.
+                        const allErrors = errorKeys
+                            .map(error => {
+                                if (Array.isArray(error.value)) {
+                                    return error.value.join(', ');
+                                }
+
+                                return error.value;
+                            })
+                            .filter(msg => msg).join(' ');
+                        
+                        this.$emitter.emit('add-flash', { 
+                            type: 'error', 
+                            message: allErrors 
                         });
                     }
                 }
-            },
-
-            addFlashMessages() {
-                const flashes = this.$refs.flashes;
-
-                flashMessages.forEach(function(flash) {
-                    flashes.addFlash(flash);
-                }, this);
-            },
-
-            showModal(id) {
-                this.$set(this.modalIds, id, true);
-            }
-        }
-    });
+            }, 100);
+        },
+    },
 });
+
+/**
+ * Global plugins registration.
+ */
+import Admin from "./plugins/admin";
+import Axios from "./plugins/axios";
+import CreateElement from "./plugins/createElement";
+import Emitter from "./plugins/emitter";
+import Flatpickr from "./plugins/flatpickr";
+import VeeValidate from "./plugins/vee-validate";
+import Draggable from "./plugins/draggable";
+import VueCal from 'vue-cal';
+import 'vue-cal/dist/vuecal.css';
+
+app.component('vue-cal', VueCal);
+
+[
+    Admin,
+    Axios,
+    CreateElement,
+    Emitter,
+    Flatpickr,
+    VeeValidate,
+    Draggable,
+].forEach((plugin) => app.use(plugin));
+
+/**
+ * Global directives.
+ */
+import Slugify from "./directives/slugify";
+import SlugifyTarget from "./directives/slugify-target";
+import Debounce from "./directives/debounce";
+import Code from "./directives/code";
+
+app.directive("slugify", Slugify);
+app.directive("slugify-target", SlugifyTarget);
+app.directive("debounce", Debounce);
+app.directive("code", Code);
+
+export default app;

@@ -1,10 +1,19 @@
-<?php 
+<?php
 
 namespace Webkul\Theme\Exceptions;
 
-class ThemeAlreadyExists extends \Exception {
+use Webkul\Theme\Theme;
 
-	public function __construct($theme) {
-		parent::__construct("Theme {$theme->name} already exists", 1);
-	}
+class ThemeAlreadyExists extends \Exception
+{
+    /**
+     * Create an instance.
+     *
+     * @param  Theme  $theme
+     * @return void
+     */
+    public function __construct($theme)
+    {
+        parent::__construct("Theme {$theme->name} already exists", 1);
+    }
 }

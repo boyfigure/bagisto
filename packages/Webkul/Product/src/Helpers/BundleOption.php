@@ -2,13 +2,10 @@
 
 namespace Webkul\Product\Helpers;
 
-/**
- * Bundle Option Helper
- *
- * @author Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
-class BundleOption extends AbstractProduct
+use Product\Product\Contracts\ProductBundleOption;
+use Webkul\Product\Contracts\Product;
+
+class BundleOption
 {
     /**
      * Product
@@ -20,7 +17,7 @@ class BundleOption extends AbstractProduct
     /**
      * Returns bundle option config
      *
-     * @param Product $product
+     * @param  Product  $product
      * @return array
      */
     public function getBundleConfig($product)
@@ -28,7 +25,7 @@ class BundleOption extends AbstractProduct
         $this->product = $product;
 
         return [
-            'options' => $this->getOptions()
+            'options' => $this->getOptions(),
         ];
     }
 
@@ -41,9 +38,29 @@ class BundleOption extends AbstractProduct
     {
         $options = [];
 
+        // eager load all inventories for bundle options
+        $this->product->bundle_options->load('bundle_option_products.product.inventories');
+
         foreach ($this->product->bundle_options as $option) {
-            $options[$option->id] = $this->getOptionItemData($option);
+            $data = $this->getOptionItemData($option);
+
+            if (
+                ! $option->is_required
+                && ! count($data['products'])
+            ) {
+                continue;
+            }
+
+            $options[$option->id] = $data;
         }
+
+        usort($options, function ($a, $b) {
+            if ($a['sort_order'] == $b['sort_order']) {
+                return 0;
+            }
+
+            return ($a['sort_order'] < $b['sort_order']) ? -1 : 1;
+        });
 
         return $options;
     }
@@ -51,7 +68,7 @@ class BundleOption extends AbstractProduct
     /**
      * Get formed data from bundle option
      *
-     * @param ProductBundleOption $option
+     * @param  ProductBundleOption  $option
      * @return array
      */
     private function getOptionItemData($option)
@@ -62,14 +79,14 @@ class BundleOption extends AbstractProduct
             'type' => $option->type,
             'is_required' => $option->is_required,
             'products' => $this->getOptionProducts($option),
-            'sort_order' => $option->sort_order
+            'sort_order' => $option->sort_order,
         ];
     }
 
     /**
      * Get formed data from bundle option product
-     * 
-     * @param ProductBundleOption $option
+     *
+     * @param  ProductBundleOption  $option
      * @return array
      */
     private function getOptionProducts($option)
@@ -77,15 +94,30 @@ class BundleOption extends AbstractProduct
         $products = [];
 
         foreach ($option->bundle_option_products as $index => $bundleOptionProduct) {
+            if (! $bundleOptionProduct->product->getTypeInstance()->isSaleable()) {
+                continue;
+            }
+
             $products[$bundleOptionProduct->id] = [
                 'id' => $bundleOptionProduct->id,
                 'qty' => $bundleOptionProduct->qty,
                 'price' => $bundleOptionProduct->product->getTypeInstance()->getProductPrices(),
                 'name' => $bundleOptionProduct->product->name,
                 'product_id' => $bundleOptionProduct->product_id,
-                'is_default' => $bundleOptionProduct->is_default
+                'is_default' => $bundleOptionProduct->is_default,
+                'sort_order' => $bundleOptionProduct->sort_order,
+                'in_stock' => $bundleOptionProduct->product->inventories->sum('qty') >= $bundleOptionProduct->qty,
+                'inventory' => $bundleOptionProduct->product->inventories->sum('qty'),
             ];
         }
+
+        usort($products, function ($a, $b) {
+            if ($a['sort_order'] == $b['sort_order']) {
+                return 0;
+            }
+
+            return ($a['sort_order'] < $b['sort_order']) ? -1 : 1;
+        });
 
         return $products;
     }

@@ -2,21 +2,28 @@
 
 namespace Webkul\Shipping\Carriers;
 
-use Illuminate\Support\Facades\Config;
+use Webkul\Shipping\Exceptions\CarrierCodeException;
 
-/**
- * Abstract class Shipping
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 abstract class AbstractShipping
 {
+    /**
+     * Shipping method carrier code.
+     *
+     * @var string
+     */
+    protected $code;
+
+    /**
+     * Shipping method code.
+     *
+     * @var string
+     */
+    protected $method;
 
     abstract public function calculate();
 
     /**
-     * Checks if payment method is available
+     * Checks if shipping method is available.
      *
      * @return array
      */
@@ -26,21 +33,37 @@ abstract class AbstractShipping
     }
 
     /**
-     * Returns payment method code
+     * Returns shipping method carrier code.
      *
-     * @return array
+     * @return string
      */
     public function getCode()
     {
         if (empty($this->code)) {
-            // throw exception
+            throw new CarrierCodeException('Carrier code should be initialized.');
         }
 
         return $this->code;
     }
 
     /**
-     * Returns payment method title
+     * Return shipping method code.
+     *
+     * @return string
+     */
+    public function getMethod()
+    {
+        if (empty($this->method)) {
+            $code = $this->getCode();
+
+            return $code.'_'.$code;
+        }
+
+        return $this->method;
+    }
+
+    /**
+     * Returns shipping method title.
      *
      * @return array
      */
@@ -50,26 +73,23 @@ abstract class AbstractShipping
     }
 
     /**
-     * Returns payment method decription
+     * Returns shipping method description.
      *
      * @return array
      */
-    public function getDecription()
+    public function getDescription()
     {
-        return $this->getConfigData('decription');
+        return $this->getConfigData('description');
     }
 
     /**
-     * Retrieve information from payment configuration
+     * Retrieve information from shipping configuration.
      *
-     * @param string $field
-     * @param int|string|null $channelId
-     *
+     * @param  string  $field
      * @return mixed
      */
     public function getConfigData($field)
     {
-        return core()->getConfigData('sales.carriers.' . $this->getCode() . '.' . $field);
+        return core()->getConfigData('sales.carriers.'.$this->getCode().'.'.$field);
     }
 }
-?>

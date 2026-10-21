@@ -1,47 +1,107 @@
-@extends('shop::layouts.master')
-
 @php
     $channel = core()->getCurrentChannel();
-
-    $homeSEO = $channel->home_seo;
-
-    if (isset($homeSEO)) {
-        $homeSEO = json_decode($channel->home_seo);
-
-        $metaTitle = $homeSEO->meta_title;
-
-        $metaDescription = $homeSEO->meta_description;
-
-        $metaKeywords = $homeSEO->meta_keywords;
-    }
 @endphp
 
-@section('page_title')
-    {{ isset($metaTitle) ? $metaTitle : "" }}
-@endsection
+<!-- SEO Meta Content -->
+@push ('meta')
+    <meta
+        name="title"
+        content="{{ $channel->home_seo['meta_title'] ?? '' }}"
+    />
 
-@section('head')
+    <meta
+        name="description"
+        content="{{ $channel->home_seo['meta_description'] ?? '' }}"
+    />
 
-    @if (isset($homeSEO))
-        @isset($metaTitle)
-            <meta name="title" content="{{ $metaTitle }}" />
-        @endisset
+    <meta
+        name="keywords"
+        content="{{ $channel->home_seo['meta_keywords'] ?? '' }}"
+    />
+@endPush
 
-        @isset($metaDescription)
-            <meta name="description" content="{{ $metaDescription }}" />
-        @endisset
-
-        @isset($metaKeywords)
-            <meta name="keywords" content="{{ $metaKeywords }}" />
-        @endisset
+@push('scripts')
+    @if(! empty($categories))
+        <script>
+            localStorage.setItem('categories', JSON.stringify(@json($categories)));
+        </script>
     @endif
-@endsection
+@endpush
 
-@section('content-wrapper')
-    {!! view_render_event('bagisto.shop.home.content.before') !!}
+<x-shop::layouts>
+    <!-- Page Title -->
+    <x-slot:title>
+        {{  $channel->home_seo['meta_title'] ?? '' }}
+    </x-slot>
 
-    {!! DbView::make($channel)->field('home_page_content')->with(['sliderData' => $sliderData])->render() !!}
+    <!-- Loop over the storefront sections -->
+    @foreach ($sections as $section)
+        @php ($data = $section->options) @endphp
 
-    {{ view_render_event('bagisto.shop.home.content.after') }}
+        {{-- The layout marks the types it draws on every page, so this page marks the rest. --}}
+        @php ($marks = ($preview ?? false) && ! $section->getTypeInstance()?->rendersInLayout())
 
-@endsection
+        @if ($marks)
+            <div
+                data-section-id="{{ $section->id }}"
+                data-section-name="{{ $section->name }}"
+            >
+        @endif
+
+        <!-- Static Content -->
+        @switch ($section->type)
+            @case (\Webkul\Theme\Enums\SectionTypeEnum::IMAGE_CAROUSEL->value)
+                <!-- Image Carousel -->
+                <x-shop::carousel
+                    :options="$section->getTypeInstance()?->sanitize((array) $data) ?? $data"
+                    aria-label="{{ trans('shop::app.home.index.image-carousel') }}"
+                />
+
+                @break
+            @case (\Webkul\Theme\Enums\SectionTypeEnum::STATIC_CONTENT->value)
+                <!-- Push Style -->
+                @if (! empty($data['css']))
+                    @push ('styles')
+                        <style>
+                            {!! bagisto_theme_storage()->resolveMarkup($data['css']) !!}
+                        </style>
+                    @endpush
+                @endif
+
+                <!-- Render HTML -->
+                @if (! empty($data['html']))
+                    {!! bagisto_theme_storage()->resolveMarkup($data['html']) !!}
+                @endif
+
+                @break
+            @case (\Webkul\Theme\Enums\SectionTypeEnum::CATEGORY_CAROUSEL->value)
+                <!-- Categories carousel -->
+                <x-shop::categories.carousel
+                    :title="$data['title'] ?? ''"
+                    :src="route('shop.api.categories.index', $data['filters'] ?? [])"
+                    :navigation-link="route('shop.home.index')"
+                    aria-label="{{ trans('shop::app.home.index.categories-carousel') }}"
+                />
+
+                @break
+            @case (\Webkul\Theme\Enums\SectionTypeEnum::PRODUCT_CAROUSEL->value)
+                <!-- Product Carousel -->
+                <x-shop::products.carousel
+                    :title="$data['title'] ?? ''"
+                    :src="route('shop.api.products.index', $data['filters'] ?? [])"
+                    :navigation-link="route('shop.search.index', $data['filters'] ?? [])"
+                    aria-label="{{ trans('shop::app.home.index.product-carousel') }}"
+                />
+
+                @break
+        @endswitch
+
+        @if ($marks)
+            </div>
+        @endif
+    @endforeach
+
+    @if ($preview ?? false)
+        @include('shop::home.preview-bridge')
+    @endif
+</x-shop::layouts>

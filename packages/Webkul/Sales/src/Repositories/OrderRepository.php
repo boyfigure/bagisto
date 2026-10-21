@@ -2,108 +2,74 @@
 
 namespace Webkul\Sales\Repositories;
 
-use Illuminate\Container\Container as App;
-use Illuminate\Support\Facades\Event;
+use Illuminate\Container\Container;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
+use Webkul\CartRule\Exceptions\CouponUsageLimitExceededException;
 use Webkul\Core\Eloquent\Repository;
-use Webkul\Sales\Contracts\Order;
-use Webkul\Sales\Repositories\OrderItemRepository;
-use Webkul\Core\Models\CoreConfig;
+use Webkul\Product\Repositories\ProductCustomizableOptionRepository;
+use Webkul\Sales\Contracts\Order as OrderContract;
+use Webkul\Sales\Exceptions\InsufficientInventoryException;
+use Webkul\Sales\Generators\OrderSequencer;
+use Webkul\Sales\Models\Order;
 
-/**
- * Order Reposotory
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class OrderRepository extends Repository
 {
     /**
-     * OrderItemRepository object
-     *
-     * @var Object
-     */
-    protected $orderItemRepository;
-
-    /**
-     * DownloadableLinkPurchasedRepository object
-     *
-     * @var Object
-     */
-    protected $downloadableLinkPurchasedRepository;
-
-    /**
      * Create a new repository instance.
      *
-     * @param  Webkul\Sales\Repositories\OrderItemRepository                 $orderItemRepository
-     * @param  Webkul\Sales\Repositories\DownloadableLinkPurchasedRepository $downloadableLinkPurchasedRepository
      * @return void
      */
     public function __construct(
-        OrderItemRepository $orderItemRepository,
-        DownloadableLinkPurchasedRepository $downloadableLinkPurchasedRepository,
-        App $app
-    )
-    {
-        $this->orderItemRepository = $orderItemRepository;
-
-        $this->downloadableLinkPurchasedRepository = $downloadableLinkPurchasedRepository;
-
-        parent::__construct($app);
+        protected OrderItemRepository $orderItemRepository,
+        protected ProductCustomizableOptionRepository $productCustomizableOptionRepository,
+        protected DownloadableLinkPurchasedRepository $downloadableLinkPurchasedRepository,
+        Container $container
+    ) {
+        parent::__construct($container);
     }
 
     /**
-     * Specify Model class name
+     * Specify model class name.
+     */
+    public function model(): string
+    {
+        return OrderContract::class;
+    }
+
+    /**
+     * This method will try attempt to a create order.
      *
-     * @return Mixed
+     * @return OrderContract
      */
-
-    function model()
+    public function createOrderIfNotThenRetry(array $data, int $attempt = 1, ?int $maxAttempts = null)
     {
-        return Order::class;
-    }
+        $maxAttempts = $maxAttempts ?? core()->getConfigData('sales.order_settings.order_creation.max_retry_attempts') ?? 3;
 
-    /**
-     * @param array $data
-     * @return mixed
-     */
-    public function create(array $data)
-    {
         DB::beginTransaction();
 
         try {
-            Event::fire('checkout.order.save.before', $data);
+            Event::dispatch('checkout.order.save.before', [$data]);
 
-            if (isset($data['customer']) && $data['customer']) {
-                $data['customer_id'] = $data['customer']->id;
-                $data['customer_type'] = get_class($data['customer']);
-            } else {
-                unset($data['customer']);
-            }
-
-            if (isset($data['channel']) && $data['channel']) {
-                $data['channel_id'] = $data['channel']->id;
-                $data['channel_type'] = get_class($data['channel']);
-                $data['channel_name'] = $data['channel']->name;
-            } else {
-                unset($data['channel']);
-            }
-
-            $data['status'] = 'pending';
+            $data['status'] = Order::STATUS_PENDING;
 
             $order = $this->model->create(array_merge($data, ['increment_id' => $this->generateIncrementId()]));
 
             $order->payment()->create($data['payment']);
 
-            if (isset($data['shipping_address']))
+            if (isset($data['shipping_address'])) {
                 $order->addresses()->create($data['shipping_address']);
+            }
 
             $order->addresses()->create($data['billing_address']);
 
             foreach ($data['items'] as $item) {
+                Event::dispatch('checkout.order.orderitem.save.before', $item);
+
                 $orderItem = $this->orderItemRepository->create(array_merge($item, ['order_id' => $order->id]));
 
-                if (isset($item['children']) && $item['children']) {
+                if (! empty($item['children'])) {
                     foreach ($item['children'] as $child) {
                         $this->orderItemRepository->create(array_merge($child, ['order_id' => $order->id, 'parent_id' => $orderItem->id]));
                     }
@@ -111,37 +77,83 @@ class OrderRepository extends Repository
 
                 $this->orderItemRepository->manageInventory($orderItem);
 
+                $this->orderItemRepository->manageCustomizableOptions($orderItem);
+
                 $this->downloadableLinkPurchasedRepository->saveLinks($orderItem, 'available');
+
+                Event::dispatch('checkout.order.orderitem.save.after', $orderItem);
             }
 
-            Event::fire('checkout.order.save.after', $order);
+            Event::dispatch('checkout.order.save.after', $order);
+
+            DB::commit();
         } catch (\Exception $e) {
             DB::rollBack();
 
+            /**
+             * Do not retry when coupon usage limits are exceeded — this is a
+             * definitive business-logic failure, not a transient DB error.
+             */
+            if (
+                $e instanceof CouponUsageLimitExceededException
+                || $e instanceof InsufficientInventoryException
+            ) {
+                throw $e;
+            }
+
+            /* storing log for errors */
+            Log::error(
+                'OrderRepository:createOrderIfNotThenRetry: '.$e->getMessage(),
+                ['data' => $data, 'attempt' => $attempt, 'max_attempts' => $maxAttempts]
+            );
+
+            /* recalling if max attempts not reached */
+            if ($attempt < $maxAttempts) {
+                return $this->createOrderIfNotThenRetry($data, $attempt + 1, $maxAttempts);
+            }
+
+            /* rethrow the exception if max attempts reached */
             throw $e;
         }
-
-        DB::commit();
 
         return $order;
     }
 
     /**
-     * @param int $orderId
-     * @return mixed
+     * Create order.
+     *
+     * @return OrderContract
      */
-    public function cancel($orderId)
+    public function create(array $data)
     {
-        $order = $this->findOrFail($orderId);
+        return $this->createOrderIfNotThenRetry($data);
+    }
 
-        if (! $order->canCancel())
+    /**
+     * Cancel order. This method should be independent as admin also can cancel the order.
+     *
+     * @param  Order|int  $orderOrId
+     * @param  bool  $force  When true, customer-facing cancellation policies
+     *                       (currently the booking `allow_cancellation` flag)
+     *                       are ignored. Intended for admin overrides.
+     * @return bool
+     */
+    public function cancel($orderOrId, bool $force = false)
+    {
+        /* order */
+        $order = $this->resolveOrderInstance($orderOrId);
+
+        /* check wether order can be cancelled or not */
+        if (! $order->canCancel($force)) {
             return false;
+        }
 
-        Event::fire('sales.order.cancel.before', $order);
+        Event::dispatch('sales.order.cancel.before', $order);
 
         foreach ($order->items as $item) {
-            if (! $item->qty_to_cancel)
+            if (! $item->canCancel($force)) {
                 continue;
+            }
 
             $orderItems = [];
 
@@ -152,16 +164,18 @@ class OrderRepository extends Repository
             } else {
                 $orderItems[] = $item;
             }
-    
+
             foreach ($orderItems as $orderItem) {
-                if ($orderItem->product)
-                    $this->orderItemRepository->returnQtyToProductInventory($orderItem);
-    
+                $this->orderItemRepository->returnQtyToProductInventory($orderItem);
+
                 if ($orderItem->qty_ordered) {
                     $orderItem->qty_canceled += $orderItem->qty_to_cancel;
                     $orderItem->save();
 
-                    if ($orderItem->parent && $orderItem->parent->qty_ordered) {
+                    if (
+                        $orderItem->parent
+                        && $orderItem->parent->qty_ordered
+                    ) {
                         $orderItem->parent->qty_canceled += $orderItem->parent->qty_to_cancel;
                         $orderItem->parent->save();
                     }
@@ -176,53 +190,37 @@ class OrderRepository extends Repository
 
         $this->updateOrderStatus($order);
 
-        Event::fire('sales.order.cancel.after', $order);
+        Event::dispatch('sales.order.cancel.after', $order);
 
         return true;
     }
 
     /**
-     * @return integer
+     * Generate increment id.
+     *
+     * @return int
      */
     public function generateIncrementId()
     {
-        $config = new CoreConfig();
-
-        $invoiceNumberPrefix = $config->where('code','=',"sales.orderSettings.order_number.order_number_prefix")->first()
-            ? $config->where('code','=',"sales.orderSettings.order_number.order_number_prefix")->first()->value : false;
-
-        $invoiceNumberLength = $config->where('code','=',"sales.orderSettings.order_number.order_number_length")->first()
-            ? $config->where('code','=',"sales.orderSettings.order_number.order_number_length")->first()->value : false;
-
-        $invoiceNumberSuffix = $config->where('code','=',"sales.orderSettings.order_number.order_number_suffix")->first()
-            ? $config->where('code','=',"sales.orderSettings.order_number.order_number_suffix")->first()->value: false;
-
-        $lastOrder = $this->model->orderBy('id', 'desc')->limit(1)->first();
-        $lastId = $lastOrder ? $lastOrder->id : 0;
-
-        if ($invoiceNumberLength && ( $invoiceNumberPrefix || $invoiceNumberSuffix) ) {
-            $invoiceNumber = $invoiceNumberPrefix . sprintf("%0{$invoiceNumberLength}d", 0) . ($lastId + 1) . $invoiceNumberSuffix;
-        } else {
-            $invoiceNumber = $lastId + 1;
-        }
-
-        return $invoiceNumber;
+        return app(OrderSequencer::class)->resolveGeneratorClass();
     }
 
     /**
-     * @param mixed $order
-     * @return void
+     * Is order in completed state.
+     *
+     * @param  OrderContract  $order
+     * @return bool
      */
     public function isInCompletedState($order)
     {
         $totalQtyOrdered = $totalQtyInvoiced = $totalQtyShipped = $totalQtyRefunded = $totalQtyCanceled = 0;
 
-        foreach ($order->items()->get()  as $item) {
+        foreach ($order->items()->get() as $item) {
             $totalQtyOrdered += $item->qty_ordered;
             $totalQtyInvoiced += $item->qty_invoiced;
 
             if (! $item->isStockable()) {
-                $totalQtyShipped += $item->qty_ordered;
+                $totalQtyShipped += $item->qty_invoiced;
             } else {
                 $totalQtyShipped += $item->qty_shipped;
             }
@@ -231,17 +229,52 @@ class OrderRepository extends Repository
             $totalQtyCanceled += $item->qty_canceled;
         }
 
-        if ($totalQtyOrdered != ($totalQtyRefunded + $totalQtyCanceled)
-            && $totalQtyOrdered == $totalQtyInvoiced + $totalQtyCanceled
-            && $totalQtyOrdered == $totalQtyShipped + $totalQtyRefunded + $totalQtyCanceled)
+        /**
+         * Canceled state.
+         */
+        if ($totalQtyOrdered === $totalQtyCanceled) {
+            return false;
+        }
+
+        /**
+         * Closed state.
+         */
+        if ($totalQtyOrdered === $totalQtyRefunded + $totalQtyCanceled) {
+            return false;
+        }
+
+        /**
+         * Completed state.
+         */
+        if (
+            $totalQtyOrdered === $totalQtyInvoiced + $totalQtyCanceled
+        ) {
+            if ($totalQtyInvoiced === $totalQtyShipped) {
+                return $totalQtyOrdered === $totalQtyShipped + $totalQtyCanceled;
+            }
+
+            return $totalQtyOrdered === $totalQtyShipped + $totalQtyRefunded;
+        }
+
+        /**
+         * If order is already completed and total quantity ordered is not equal to refunded
+         * then it can be considered as completed.
+         */
+        if (
+            $order->status === Order::STATUS_COMPLETED
+            && $totalQtyOrdered != $totalQtyRefunded
+        ) {
             return true;
+        }
 
         return false;
     }
 
     /**
-     * @param mixed $order
-     * @return void
+     * Is order in cancelled state.
+     *
+     * @param  OrderContract  $order
+     * @return bool
      */
     public function isInCanceledState($order)
     {
@@ -256,14 +289,16 @@ class OrderRepository extends Repository
     }
 
     /**
-     * @param mixed $order
-     * @return void
+     * Is order in closed state.
+     *
+     * @param  mixed  $order
+     * @return bool
      */
     public function isInClosedState($order)
     {
         $totalQtyOrdered = $totalQtyRefunded = $totalQtyCanceled = 0;
 
-        foreach ($order->items()->get()  as $item) {
+        foreach ($order->items()->get() as $item) {
             $totalQtyOrdered += $item->qty_ordered;
             $totalQtyRefunded += $item->qty_refunded;
             $totalQtyCanceled += $item->qty_canceled;
@@ -273,32 +308,48 @@ class OrderRepository extends Repository
     }
 
     /**
-     * @param mixed $order
+     * Update order status.
+     *
+     * @param  OrderContract  $order
+     * @param  string  $orderState
      * @return void
      */
-    public function updateOrderStatus($order)
+    public function updateOrderStatus($order, $orderState = null)
     {
-        $status = 'processing';
+        Event::dispatch('sales.order.update-status.before', $order);
 
-        if ($this->isInCompletedState($order))
-            $status = 'completed';
+        if (! empty($orderState)) {
+            $status = $orderState;
+        } else {
+            $status = Order::STATUS_PROCESSING;
 
-        if ($this->isInCanceledState($order))
-            $status = 'canceled';
-        else if ($this->isInClosedState($order))
-            $status = 'closed';
+            if ($this->isInCompletedState($order)) {
+                $status = Order::STATUS_COMPLETED;
+            }
+
+            if ($this->isInCanceledState($order)) {
+                $status = Order::STATUS_CANCELED;
+            } elseif ($this->isInClosedState($order)) {
+                $status = Order::STATUS_CLOSED;
+            }
+        }
 
         $order->status = $status;
+
         $order->save();
+
+        Event::dispatch('sales.order.update-status.after', $order);
     }
 
     /**
-     * @param mixed $order
+     * Collect totals.
+     *
+     * @param  OrderContract  $order
      * @return mixed
      */
     public function collectTotals($order)
     {
-        //Order invoice total
+        // order invoice total
         $order->sub_total_invoiced = $order->base_sub_total_invoiced = 0;
         $order->shipping_invoiced = $order->base_shipping_invoiced = 0;
         $order->tax_amount_invoiced = $order->base_tax_amount_invoiced = 0;
@@ -321,7 +372,7 @@ class OrderRepository extends Repository
         $order->grand_total_invoiced = $order->sub_total_invoiced + $order->shipping_invoiced + $order->tax_amount_invoiced - $order->discount_invoiced;
         $order->base_grand_total_invoiced = $order->base_sub_total_invoiced + $order->base_shipping_invoiced + $order->base_tax_amount_invoiced - $order->base_discount_invoiced;
 
-        //Order refund total
+        // order refund total
         $order->sub_total_refunded = $order->base_sub_total_refunded = 0;
         $order->shipping_refunded = $order->base_shipping_refunded = 0;
         $order->tax_amount_refunded = $order->base_tax_amount_refunded = 0;
@@ -351,5 +402,18 @@ class OrderRepository extends Repository
         $order->save();
 
         return $order;
+    }
+
+    /**
+     * This method will find order if id is given else pass the order as it is.
+     *
+     * @param  Order|int  $orderOrId
+     * @return OrderContract
+     */
+    protected function resolveOrderInstance($orderOrId)
+    {
+        return $orderOrId instanceof Order
+            ? $orderOrId
+            : $this->findOrFail($orderOrId);
     }
 }

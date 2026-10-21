@@ -2,18 +2,43 @@
 
 namespace Webkul\Attribute\Models;
 
+use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Webkul\Product\Models\ProductProxy;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Webkul\Attribute\Contracts\AttributeFamily as AttributeFamilyContract;
+use Webkul\Attribute\Database\Factories\AttributeFamilyFactory;
+use Webkul\Product\Models\ProductProxy;
 
 class AttributeFamily extends Model implements AttributeFamilyContract
 {
-    public $timestamps = false;
-
-    protected $fillable = ['code', 'name'];
+    use HasFactory;
 
     /**
-     * Get all of the attributes for the attribute groups.
+     * Code of the family every other screen falls back to, and the one the create family
+     * screen builds its groups from.
+     */
+    public const DEFAULT_CODE = 'default';
+
+    /**
+     * Indicates if the model should be timestamped.
+     *
+     * @var bool
+     */
+    public $timestamps = false;
+
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var array
+     */
+    protected $fillable = [
+        'code',
+        'name',
+    ];
+
+    /**
+     * Get all the attributes for the attribute groups.
      */
     public function custom_attributes()
     {
@@ -25,7 +50,19 @@ class AttributeFamily extends Model implements AttributeFamilyContract
     }
 
     /**
-     * Get all of the attributes for the attribute groups.
+     * Get all the comparable attributes which belongs to attribute family.
+     */
+    public function getComparableAttributesBelongsToFamily()
+    {
+        return (AttributeProxy::modelClass())::join('attribute_group_mappings', 'attribute_group_mappings.attribute_id', '=', 'attributes.id')
+            ->select('attributes.*')
+            ->where('attributes.is_comparable', 1)
+            ->distinct()
+            ->get();
+    }
+
+    /**
+     * Get all the attributes for the attribute groups.
      */
     public function getCustomAttributesAttribute()
     {
@@ -33,26 +70,39 @@ class AttributeFamily extends Model implements AttributeFamilyContract
     }
 
     /**
-     * Get all of the attribute groups.
+     * Get all the attribute groups.
      */
-    public function attribute_groups()
+    public function attribute_groups(): HasMany
     {
-        return $this->hasMany(AttributeGroupProxy::modelClass())->orderBy('position');
+        return $this->hasMany(AttributeGroupProxy::modelClass())
+            ->orderBy('column')
+            ->orderBy('position');
     }
 
     /**
-     * Get all of the attributes for the attribute groups.
+     * Get all the attributes for the attribute groups.
      */
     public function getConfigurableAttributesAttribute()
     {
-        return $this->custom_attributes()->where('attributes.is_configurable', 1)->where('attributes.type', 'select')->get();
+        return $this->custom_attributes()
+            ->where('attributes.is_configurable', 1)
+            ->where('attributes.type', 'select')
+            ->get();
     }
 
     /**
-     * Get all of the products.
+     * Get all the products.
      */
-    public function products()
+    public function products(): HasMany
     {
         return $this->hasMany(ProductProxy::modelClass());
+    }
+
+    /**
+     * Create a new factory instance for the model
+     */
+    protected static function newFactory(): Factory
+    {
+        return AttributeFamilyFactory::new();
     }
 }

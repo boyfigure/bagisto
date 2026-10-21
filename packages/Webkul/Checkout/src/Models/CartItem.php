@@ -2,73 +2,105 @@
 
 namespace Webkul\Checkout\Models;
 
+use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Webkul\Product\Models\ProductProxy;
-use Webkul\Product\Models\ProductFlatProxy;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Webkul\Checkout\Contracts\CartItem as CartItemContract;
-
+use Webkul\Checkout\Database\Factories\CartItemFactory;
+use Webkul\Product\Models\ProductProxy;
+use Webkul\Product\Type\AbstractType;
 
 class CartItem extends Model implements CartItemContract
 {
-    protected $table = 'cart_items';
+    use HasFactory;
 
+    /**
+     * Cast the additional attribute to an array.
+     */
     protected $casts = [
         'additional' => 'array',
     ];
 
-    protected $guarded = ['id', 'created_at', 'updated_at'];
+    /**
+     * Guarded attributes.
+     */
+    protected $guarded = [
+        'id',
+        'created_at',
+        'updated_at',
+    ];
 
-    public function product()
+    /**
+     * Type instance.
+     */
+    protected $typeInstance;
+
+    /**
+     * Retrieve type instance.
+     */
+    public function getTypeInstance(): AbstractType
+    {
+        if ($this->typeInstance) {
+            return $this->typeInstance;
+        }
+
+        $this->typeInstance = app(config('product_types.'.$this->type.'.class'));
+
+        if ($this->product) {
+            $this->typeInstance->setProduct($this->product);
+        }
+
+        return $this->typeInstance;
+    }
+
+    /**
+     * Get the product record associated with the cart item.
+     */
+    public function product(): HasOne
     {
         return $this->hasOne(ProductProxy::modelClass(), 'id', 'product_id');
     }
 
     /**
-     * The Product Flat that belong to the product.
+     * Get the cart record associated with the cart item.
      */
-    public function product_flat()
-    {
-        return (ProductFlatProxy::modelClass())
-            ::where('product_flat.product_id', $this->product_id)
-            ->where('product_flat.locale', app()->getLocale())
-            ->where('product_flat.channel', core()->getCurrentChannelCode())
-            ->select('product_flat.*');
-    }
-
-    /**
-     * Get all of the attributes for the attribute groups.
-     */
-    public function getProductFlatAttribute()
-    {
-        return $this->product_flat()->first();
-    }
-
-    public function cart()
+    public function cart(): HasOne
     {
         return $this->hasOne(CartProxy::modelClass(), 'id', 'cart_id');
     }
 
     /**
-     * Get the child item.
-     */
-    public function child()
-    {
-        return $this->belongsTo(static::class, 'id', 'parent_id');
-    }
-
-    /**
      * Get the parent item record associated with the cart item.
      */
-    public function parent()
+    public function parent(): BelongsTo
     {
         return $this->belongsTo(self::class, 'parent_id');
     }
 
     /**
-     * Get the children items.
+     * Get the child item, this is for configurable products.
      */
-    public function children()
+    public function child(): BelongsTo
+    {
+        return $this->belongsTo(static::class, 'id', 'parent_id');
+    }
+
+    /**
+     * Get the children items, this is for bundle products.
+     */
+    public function children(): HasMany
     {
         return $this->hasMany(self::class, 'parent_id');
+    }
+
+    /**
+     * Create a new factory instance for the model.
+     */
+    protected static function newFactory(): Factory
+    {
+        return CartItemFactory::new();
     }
 }

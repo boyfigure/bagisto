@@ -3,36 +3,58 @@
 namespace Webkul\Product\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Webkul\Product\Contracts\ProductFlat as ProductFlatContract;
+use Webkul\Product\Type\AbstractType;
 
 class ProductFlat extends Model implements ProductFlatContract
 {
+    /**
+     * The table associated with the model.
+     *
+     * @var string
+     */
     protected $table = 'product_flat';
 
-    protected $guarded = ['id', 'created_at', 'updated_at'];
-
-    public $timestamps = false;
-
     /**
-     * Retrieve type instance
+     * The attributes that aren't mass assignable.
      *
-     * @return AbstractType
+     * @var array
      */
-    public function getTypeInstance()
-    {
-        return $this->product->getTypeInstance();
-    }
+    protected $guarded = [
+        'id',
+        'created_at',
+        'updated_at',
+    ];
 
     /**
-     * Get the product attribute family that owns the product.
+     * The attributes that should be cast.
+     *
+     * @var array
      */
-    public function getAttributeFamilyAttribute()
-    {
-        return $this->product->attribute_family;
-    }
+    protected $casts = [
+        'featured' => 'boolean',
+        'new' => 'boolean',
+        'status' => 'boolean',
+        'visible_individually' => 'boolean',
+    ];
+
+    /**
+     * Ignorable attributes.
+     *
+     * @var array
+     */
+    protected $ignorableAttributes = [
+        'pivot',
+        'parent_id',
+        'attribute_family_id',
+    ];
 
     /**
      * Get the product that owns the attribute value.
+     *
+     * @return BelongsTo
      */
     public function product()
     {
@@ -40,15 +62,9 @@ class ProductFlat extends Model implements ProductFlatContract
     }
 
     /**
-     * Get the product variants that owns the product.
-     */
-    public function variants()
-    {
-        return $this->hasMany(static::class, 'parent_id');
-    }
-
-    /**
      * Get the product that owns the product.
+     *
+     * @return BelongsTo
      */
     public function parent()
     {
@@ -56,150 +72,22 @@ class ProductFlat extends Model implements ProductFlatContract
     }
 
     /**
-     * Get product type value from base product
-     */
-    public function getTypeAttribute()
-    {
-        return $this->product->type;
-    }
-
-    /**
-     * @param string $key
+     * Get the product variants that owns the product.
      *
-     * @return bool
+     * @return HasMany
      */
-    public function isSaleable()
+    public function variants()
     {
-        return $this->product->isSaleable();
+        return $this->hasMany(static::class, 'parent_id');
     }
 
     /**
-     * @return integer
-     */
-    public function totalQuantity()
-    {
-        return $this->product->totalQuantity();
-    }
-
-    /**
-     * @param integer $qty
+     * Retrieve type instance.
      *
-     * @return bool
+     * @return AbstractType
      */
-    public function haveSufficientQuantity($qty)
+    public function getTypeInstance()
     {
-        return $this->product->haveSufficientQuantity($qty);
-    }
-
-    /**
-     * @return bool
-     */
-    public function isStockable()
-    {
-        return $this->product->isStockable();
-    }
-
-    /**
-     * The images that belong to the product.
-     */
-    public function images()
-    {
-        return (ProductImageProxy::modelClass())
-            ::where('product_images.product_id', $this->product_id)
-            ->select('product_images.*');
-    }
-
-    /**
-     * Get all of the attributes for the attribute groups.
-     */
-    public function getImagesAttribute()
-    {
-        return $this->images()->get();
-    }
-
-    /**
-     * The reviews that belong to the product.
-     */
-    public function reviews()
-    {
-        return (ProductReviewProxy::modelClass())
-            ::where('product_reviews.product_id', $this->product_id)
-            ->select('product_reviews.*');
-    }
-
-    /**
-     * Get all of the reviews for the attribute groups.
-     */
-    public function getReviewsAttribute()
-    {
-        return $this->reviews()->get();
-    }
-
-    /**
-     * The related products that belong to the product.
-     */
-    public function related_products()
-    {
-        return $this->product->related_products();
-    }
-
-    /**
-     * The up sells that belong to the product.
-     */
-    public function up_sells()
-    {
-        return $this->product->up_sells();
-    }
-
-    /**
-     * The cross sells that belong to the product.
-     */
-    public function cross_sells()
-    {
-        return $this->product->cross_sells();
-    }
-
-    /**
-     * The images that belong to the product.
-     */
-    public function downloadable_samples()
-    {
-        return $this->product->downloadable_samples();
-    }
-
-    /**
-     * The images that belong to the product.
-     */
-    public function downloadable_links()
-    {
-        return $this->product->downloadable_links();
-    }
-
-    /**
-     * Get the grouped products that owns the product.
-     */
-    public function grouped_products()
-    {
-        return $this->product->grouped_products();
-    }
-
-    /**
-     * Get the bundle options that owns the product.
-     */
-    public function bundle_options()
-    {
-        return $this->product->bundle_options();
-    }
-
-    /**
-     * Retrieve product attributes
-     *
-     * @param Group $group
-     * @param bool  $skipSuperAttribute
-     * @return Collection
-     */
-    public function getEditableAttributes($group = null, $skipSuperAttribute = true)
-    {
-        return $this->product->getEditableAttributes($groupId, $skipSuperAttribute);
+        return $this->product->getTypeInstance();
     }
 }

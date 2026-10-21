@@ -2,26 +2,61 @@
 
 namespace Webkul\Admin\Providers;
 
-use Illuminate\Support\ServiceProvider;
-use Illuminate\Support\Facades\Event;
+use Illuminate\Foundation\Support\Providers\EventServiceProvider as ServiceProvider;
+use Webkul\Admin\Listeners\Admin;
+use Webkul\Admin\Listeners\Customer;
+use Webkul\Admin\Listeners\GDPR;
+use Webkul\Admin\Listeners\Invoice;
+use Webkul\Admin\Listeners\Order;
+use Webkul\Admin\Listeners\Refund;
+use Webkul\Admin\Listeners\Shipment;
 
 class EventServiceProvider extends ServiceProvider
 {
     /**
-     * Bootstrap services.
+     * The event handler mappings for the application.
      *
-     * @return void
+     * @var array
      */
-    public function boot()
-    {
-        Event::listen('checkout.order.save.after', 'Webkul\Admin\Listeners\Order@sendNewOrderMail');
+    protected $listen = [
+        'customer.create.after' => [
+            [Customer::class, 'afterCreated'],
+        ],
 
-        Event::listen('sales.invoice.save.after', 'Webkul\Admin\Listeners\Order@sendNewInvoiceMail');
+        'customer.gdpr-request.create.after' => [
+            [GDPR::class, 'afterGdprRequestCreated'],
+        ],
 
-        Event::listen('sales.shipment.save.after', 'Webkul\Admin\Listeners\Order@sendNewShipmentMail');
+        'customer.gdpr-request.update.after' => [
+            [GDPR::class, 'afterGdprRequestUpdated'],
+        ],
 
-        Event::listen('sales.order.cancel.after','Webkul\Admin\Listeners\Order@sendCancelOrderMail');
+        'admin.password.update.after' => [
+            [Admin::class, 'afterPasswordUpdated'],
+        ],
 
-        Event::listen('sales.refund.save.after','Webkul\Admin\Listeners\Order@sendNewRefundMail');
-    }
+        'admin.password.send_reset_link' => [
+            [Admin::class, 'sendResetLink'],
+        ],
+
+        'checkout.order.save.after' => [
+            [Order::class, 'afterCreated'],
+        ],
+
+        'sales.order.cancel.after' => [
+            [Order::class, 'afterCanceled'],
+        ],
+
+        'sales.invoice.save.after' => [
+            [Invoice::class, 'afterCreated'],
+        ],
+
+        'sales.shipment.save.after' => [
+            [Shipment::class, 'afterCreated'],
+        ],
+
+        'sales.refund.save.after' => [
+            [Refund::class, 'afterCreated'],
+        ],
+    ];
 }

@@ -1,29 +1,21 @@
-@extends('shop::layouts.master')
+<!-- SEO Meta Content -->
+@push('meta')
+    <meta name="title" content="{{ $page->meta_title }}" />
 
-@section('page_title')
-    {{ $page->page_title }}
-@endsection
+    <meta name="description" content="{{ $page->meta_description }}" />
 
-@section('head')
-    @isset($page->meta_title)
-        <meta name="title" content="{{ $page->meta_title }}" />
-    @endisset
+    <meta name="keywords" content="{{ $page->meta_keywords }}" />
+@endPush
 
-    @isset($page->meta_description)
-        <meta name="description" content="{{ $page->meta_description }}" />
-    @endisset
+<!-- Page Layout -->
+<x-shop::layouts>
+    <!-- Page Title -->
+    <x-slot:title>
+        {{ $page->meta_title }}
+    </x-slot>
 
-    @isset($page->meta_keywords)
-        <meta name="keywords" content="{{ $page->meta_keywords }}" />
-    @endisset
-
-    <link href="{{ asset('themes/default/assets/css/shop.css') }}" rel="stylesheet" />
-@endsection
-
-@section('content-wrapper')
-    {!! DbView::make($page)->field('html_content')->render() !!}
-@endsection
-
-@push('scripts')
-    <script src="{{ asset('themes/default/assets/js/shop.js') }}" type="text/javascript"></script>
-@endpush
+    <!-- Page Content -->
+    <div class="container mt-8 px-15 max-lg:px-8">
+        {!! $page->html_content !!}
+    </div>
+</x-shop::layouts>

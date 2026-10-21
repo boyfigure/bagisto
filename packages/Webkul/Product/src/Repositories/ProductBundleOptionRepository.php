@@ -2,70 +2,62 @@
 
 namespace Webkul\Product\Repositories;
 
-use Illuminate\Container\Container as App;
+use Illuminate\Container\Container;
+use Illuminate\Support\Str;
 use Webkul\Core\Eloquent\Repository;
+use Webkul\Product\Contracts\Product;
+use Webkul\Product\Contracts\ProductBundleOption;
 
-/**
- * ProductBundleOption Repository
- *
- * @author Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class ProductBundleOptionRepository extends Repository
 {
     /**
-     * ProductBundleOptionProductRepository object
+     * Create a new repository instance.
      *
-     * @var ProductBundleOptionProductRepository
-     */
-    protected $productBundleOptionProductRepository;
-
-    /**
-     * Create a new controller instance.
-     *
-     * @param  Webkul\Product\Repositories\ProductBundleOptionProductRepository $productBundleOptionProductRepository
      * @return void
      */
     public function __construct(
-        ProductBundleOptionProductRepository $productBundleOptionProductRepository,
-        App $app
-    )
-    {
-        $this->productBundleOptionProductRepository = $productBundleOptionProductRepository;
-
-        parent::__construct($app);
-    }
-
-    public function model()
-    {
-        return 'Webkul\Product\Contracts\ProductBundleOption';
+        protected ProductBundleOptionProductRepository $productBundleOptionProductRepository,
+        Container $container
+    ) {
+        parent::__construct($container);
     }
 
     /**
-     * @param array   $data
-     * @param Product $product
+     * Specify model class name.
+     */
+    public function model(): string
+    {
+        return ProductBundleOption::class;
+    }
+
+    /**
+     * Save bundle options.
+     *
+     * @param  array  $data
+     * @param  Product  $product
      * @return void
      */
-    public function saveBundleOptons($data, $product)
+    public function saveBundleOptions($data, $product)
     {
         $previousBundleOptionIds = $product->bundle_options()->pluck('id');
 
         if (isset($data['bundle_options'])) {
             foreach ($data['bundle_options'] as $bundleOptionId => $bundleOptionInputs) {
-                if (str_contains($bundleOptionId, 'option_')) {
+                if (Str::contains($bundleOptionId, 'option_')) {
                     $productBundleOption = $this->create(array_merge([
-                            'product_id' => $product->id,
-                        ], $bundleOptionInputs));
+                        'product_id' => $product->id,
+                    ], $bundleOptionInputs));
                 } else {
                     $productBundleOption = $this->find($bundleOptionId);
 
-                    if (is_numeric($index = $previousBundleOptionIds->search($bundleOptionId)))
+                    if (is_numeric($index = $previousBundleOptionIds->search($bundleOptionId))) {
                         $previousBundleOptionIds->forget($index);
+                    }
 
                     $this->update($bundleOptionInputs, $bundleOptionId);
                 }
 
-                $this->productBundleOptionProductRepository->saveBundleOptonProducts($bundleOptionInputs, $productBundleOption);
+                $this->productBundleOptionProductRepository->saveBundleOptionProducts($bundleOptionInputs, $productBundleOption);
             }
         }
 

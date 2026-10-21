@@ -2,26 +2,65 @@
 
 namespace Webkul\Product\Providers;
 
-use Illuminate\Support\ServiceProvider;
-use Illuminate\Support\Facades\Event;
+use Illuminate\Foundation\Support\Providers\EventServiceProvider as ServiceProvider;
+use Webkul\Product\Listeners\AttributeFamily;
+use Webkul\Product\Listeners\Category;
+use Webkul\Product\Listeners\Import;
+use Webkul\Product\Listeners\InventorySource;
+use Webkul\Product\Listeners\Order;
+use Webkul\Product\Listeners\Product;
+use Webkul\Product\Listeners\Refund;
 
 class EventServiceProvider extends ServiceProvider
 {
     /**
-     * Bootstrap services.
+     * The event handler mappings for the application.
      *
-     * @return void
+     * @var array
      */
-    public function boot()
-    {
-        Event::listen('catalog.attribute.create.after', 'Webkul\Product\Listeners\ProductFlat@afterAttributeCreatedUpdated');
+    protected $listen = [
+        'catalog.product.create.after' => [
+            [Product::class, 'afterCreate'],
+        ],
 
-        Event::listen('catalog.attribute.update.after', 'Webkul\Product\Listeners\ProductFlat@afterAttributeCreatedUpdated');
+        'catalog.product.update.after' => [
+            [Product::class, 'afterUpdate'],
+        ],
 
-        Event::listen('catalog.attribute.delete.before', 'Webkul\Product\Listeners\ProductFlat@afterAttributeDeleted');
+        'catalog.product.delete.before' => [
+            [Product::class, 'beforeDelete'],
+        ],
 
-        Event::listen('catalog.product.create.after', 'Webkul\Product\Listeners\ProductFlat@afterProductCreatedUpdated');
+        'catalog.category.update.after' => [
+            [Category::class, 'afterUpdate'],
+        ],
 
-        Event::listen('catalog.product.update.after', 'Webkul\Product\Listeners\ProductFlat@afterProductCreatedUpdated');
-    }
+        'catalog.category.delete.after' => [
+            [Category::class, 'afterDelete'],
+        ],
+
+        'catalog.attribute_family.update.after' => [
+            [AttributeFamily::class, 'afterUpdate'],
+        ],
+
+        'data_transfer.imports.batch.indexing.after' => [
+            [Import::class, 'afterBatchIndexing'],
+        ],
+
+        'inventory.inventory_source.delete.after' => [
+            [InventorySource::class, 'afterDelete'],
+        ],
+
+        'checkout.order.save.after' => [
+            [Order::class, 'afterCancelOrCreate'],
+        ],
+
+        'sales.order.cancel.after' => [
+            [Order::class, 'afterCancelOrCreate'],
+        ],
+
+        'sales.refund.save.after' => [
+            [Refund::class, 'afterCreate'],
+        ],
+    ];
 }

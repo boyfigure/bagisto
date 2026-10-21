@@ -3,52 +3,34 @@
 namespace Webkul\Customer\Repositories;
 
 use Webkul\Core\Eloquent\Repository;
-
-/**
- * CustomerGroup Reposotory
- *
- * @author    Rahul Shukla <rahulshukla.symfony517@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
+use Webkul\Customer\Contracts\CustomerGroup;
 
 class CustomerGroupRepository extends Repository
 {
     /**
-     * Specify Model class name
+     * The guest group, once it has been read.
      *
-     * @return mixed
+     * @var CustomerGroup|null
      */
+    protected $guestGroup;
 
-    function model()
+    /**
+     * Specify the model class name.
+     */
+    public function model(): string
     {
-        return 'Webkul\Customer\Contracts\CustomerGroup';
+        return CustomerGroup::class;
     }
 
     /**
-     * @param array $data
-     * @return mixed
+     * Get the group every shopper who is not logged in belongs to.
      */
-
-    public function create(array $data)
+    public function getGuestGroup(): ?CustomerGroup
     {
-        $customer = $this->model->create($data);
+        if ($this->guestGroup) {
+            return $this->guestGroup;
+        }
 
-        return $customer;
-    }
-
-    /**
-     * @param array $data
-     * @param $id
-     * @param string $attribute
-     * @return mixed
-     */
-
-    public function update(array $data, $id, $attribute = "id")
-    {
-        $customer = $this->find($id);
-
-        $customer->update($data);
-
-        return $customer;
+        return $this->guestGroup = $this->findOneByField('code', 'guest');
     }
 }

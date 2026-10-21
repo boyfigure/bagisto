@@ -2,23 +2,47 @@
 
 namespace Webkul\Payment\Payment;
 
-/**
- * Cash On Delivery payment method class
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
+use Illuminate\Support\Facades\Storage;
+
 class CashOnDelivery extends Payment
 {
     /**
-     * Payment method code
+     * Payment method code.
      *
      * @var string
      */
-    protected $code  = 'cashondelivery';
+    protected $code = 'cashondelivery';
 
-    public function getRedirectUrl()
+    /**
+     * Get redirect url.
+     *
+     * @return string
+     */
+    public function getRedirectUrl() {}
+
+    /**
+     * Is available.
+     *
+     * @return bool
+     */
+    public function isAvailable()
     {
-        
+        if (! $this->cart) {
+            $this->setCart();
+        }
+
+        return $this->getConfigData('active') && $this->cart?->hasOnlyStockableItems();
+    }
+
+    /**
+     * Get payment method image.
+     *
+     * @return array
+     */
+    public function getImage()
+    {
+        $url = $this->getConfigData('image');
+
+        return $url ? Storage::url($url) : bagisto_asset('images/cash-on-delivery.png', 'shop');
     }
 }

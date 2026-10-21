@@ -3,178 +3,273 @@
 namespace Webkul\Product\Type;
 
 use Webkul\Attribute\Repositories\AttributeRepository;
-use Webkul\Product\Repositories\ProductRepository;
+use Webkul\Customer\Repositories\CustomerRepository;
+use Webkul\Product\Contracts\Product;
+use Webkul\Product\Helpers\Indexers\Price\Grouped as GroupedIndexer;
 use Webkul\Product\Repositories\ProductAttributeValueRepository;
-use Webkul\Product\Repositories\ProductInventoryRepository;
-use Webkul\Product\Repositories\ProductImageRepository;
+use Webkul\Product\Repositories\ProductCustomerGroupPriceRepository;
 use Webkul\Product\Repositories\ProductGroupedProductRepository;
-use Webkul\Product\Helpers\ProductImage;
-use Webkul\Product\Models\ProductAttributeValue;
-use Webkul\Product\Models\ProductFlat;
+use Webkul\Product\Repositories\ProductImageRepository;
+use Webkul\Product\Repositories\ProductInventoryRepository;
+use Webkul\Product\Repositories\ProductRepository;
+use Webkul\Product\Repositories\ProductVideoRepository;
 
-/**
- * Class Grouped.
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class Grouped extends AbstractType
 {
     /**
-     * ProductGroupedProductRepository instance
-     *
-     * @var ProductGroupedProductRepository
-     */
-    protected $productGroupedProductRepository;
-    
-    /**
-     * Skip attribute for downloadable product type
+     * Skip attribute for downloadable product type.
      *
      * @var array
      */
-    protected $skipAttributes = ['price', 'cost', 'special_price', 'special_price_from', 'special_price_to', 'width', 'height', 'depth', 'weight'];
-
-    /**
-     * These blade files will be included in product edit page
-     * 
-     * @var array
-     */
-    protected $additionalViews = [
-        'admin::catalog.products.accordians.images',
-        'admin::catalog.products.accordians.categories',
-        'admin::catalog.products.accordians.grouped-products',
-        'admin::catalog.products.accordians.product-links'
+    protected $skipAttributes = [
+        'price',
+        'cost',
+        'special_price',
+        'special_price_from',
+        'special_price_to',
+        'length',
+        'width',
+        'height',
+        'weight',
+        'depth',
+        'manage_stock',
     ];
 
     /**
-     * Is a composite product type
+     * Is a composite product type.
      *
-     * @var boolean
+     * @var bool
      */
     protected $isComposite = true;
 
     /**
+     * Product can be added to cart with options or not.
+     *
+     * @var bool
+     */
+    protected $canBeAddedToCartWithoutOptions = false;
+
+    /**
      * Create a new product type instance.
      *
-     * @param  Webkul\Attribute\Repositories\AttributeRepository           $attributeRepository
-     * @param  Webkul\Product\Repositories\ProductRepository               $productRepository
-     * @param  Webkul\Product\Repositories\ProductAttributeValueRepository $attributeValueRepository
-     * @param  Webkul\Product\Repositories\ProductInventoryRepository      $productInventoryRepository
-     * @param  Webkul\Product\Repositories\ProductImageRepository          $productImageRepository
-     * @param  Webkul\Product\Repositories\ProductGroupedProductRepository $productGroupedProductRepository
-     * @param  Webkul\Product\Helpers\ProductImage                         $productImageHelper
      * @return void
      */
     public function __construct(
+        CustomerRepository $customerRepository,
         AttributeRepository $attributeRepository,
         ProductRepository $productRepository,
         ProductAttributeValueRepository $attributeValueRepository,
         ProductInventoryRepository $productInventoryRepository,
         ProductImageRepository $productImageRepository,
-        ProductGroupedProductRepository $productGroupedProductRepository,
-        ProductImage $productImageHelper
-    )
-    {
+        ProductVideoRepository $productVideoRepository,
+        ProductCustomerGroupPriceRepository $productCustomerGroupPriceRepository,
+        protected ProductGroupedProductRepository $productGroupedProductRepository
+    ) {
         parent::__construct(
+            $customerRepository,
             $attributeRepository,
             $productRepository,
             $attributeValueRepository,
             $productInventoryRepository,
             $productImageRepository,
-            $productImageHelper
+            $productVideoRepository,
+            $productCustomerGroupPriceRepository
         );
-
-        $this->productGroupedProductRepository = $productGroupedProductRepository;
     }
 
     /**
-     * @param array $data
-     * @param $id
-     * @param string $attribute
+     * Update.
+     *
+     * @param  int  $id
+     * @param  array  $attributes
      * @return Product
      */
-    public function update(array $data, $id, $attribute = "id")
+    public function update(array $data, $id, $attributes = [])
     {
-        $product = parent::update($data, $id, $attribute);
+        $product = parent::update($data, $id);
 
-        if (request()->route()->getName() != 'admin.catalog.products.massupdate')
-            $this->productGroupedProductRepository->saveGroupedProducts($data, $product);
+        if (! empty($attributes)) {
+            return $product;
+        }
+
+        $this->productGroupedProductRepository->saveGroupedProducts($data, $product);
 
         return $product;
     }
 
     /**
-     * Get product minimal price
+     * Returns children ids.
      *
-     * @return float
+     * @return array
      */
-    public function getMinimalPrice()
+    public function getChildrenIds()
     {
-        $minPrices = [];
-
-        $result = $this->product->grouped_products()
-            ->join('product_flat', 'product_grouped_products.associated_product_id', '=', 'product_flat.product_id')
-            ->selectRaw('IF( product_flat.special_price_from IS NOT NULL
-            AND product_flat.special_price_to IS NOT NULL , IF( NOW( ) >= product_flat.special_price_from
-            AND NOW( ) <= product_flat.special_price_to, IF( product_flat.special_price IS NULL OR product_flat.special_price = 0 , product_flat.price, LEAST( product_flat.special_price, product_flat.price ) ) , product_flat.price ) , IF( product_flat.special_price_from IS NULL , IF( product_flat.special_price_to IS NULL , IF( product_flat.special_price IS NULL OR product_flat.special_price = 0 , product_flat.price, LEAST( product_flat.special_price, product_flat.price ) ) , IF( NOW( ) <= product_flat.special_price_to, IF( product_flat.special_price IS NULL OR product_flat.special_price = 0 , product_flat.price, LEAST( product_flat.special_price, product_flat.price ) ) , product_flat.price ) ) , IF( product_flat.special_price_to IS NULL , IF( NOW( ) >= product_flat.special_price_from, IF( product_flat.special_price IS NULL OR product_flat.special_price = 0 , product_flat.price, LEAST( product_flat.special_price, product_flat.price ) ) , product_flat.price ) , product_flat.price ) ) ) AS min_price')
-            ->where('product_flat.channel', core()->getCurrentChannelCode())
-            ->where('product_flat.locale', app()->getLocale())
-            ->get();
-
-        foreach ($result as $price) {
-            $minPrices[] = $price->min_price;
-        }
-
-        if (empty($minPrices))
-            return 0;
-
-        return min($minPrices);
+        return array_unique($this->product->grouped_products()->pluck('associated_product_id')->toArray());
     }
 
     /**
-     * Get product minimal price
+     * Check if catalog rule can be applied.
+     *
+     * @return bool
+     */
+    public function priceRuleCanBeApplied()
+    {
+        return false;
+    }
+
+    /**
+     * Is saleable.
+     *
+     * @return bool
+     */
+    public function isSaleable()
+    {
+        if (! $this->product->status) {
+            return false;
+        }
+
+        foreach ($this->product->grouped_products as $groupedProduct) {
+            if ($groupedProduct->associated_product->isSaleable()) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Is product have sufficient quantity.
+     */
+    public function haveSufficientQuantity(int $qty): bool
+    {
+        foreach ($this->product->grouped_products as $groupedProduct) {
+            if ($groupedProduct->associated_product->haveSufficientQuantity($qty)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Get product minimal price.
      *
      * @return string
      */
     public function getPriceHtml()
     {
-        return '<span class="price-label">' . trans('shop::app.products.starting-at') . '</span>'
-            . '<span class="final-price">' . core()->currency($this->getMinimalPrice()) . '</span>';
+        return view('shop::products.prices.grouped', [
+            'product' => $this->product,
+            'prices' => $this->getProductPrices(),
+        ])->render();
     }
 
     /**
      * Add product. Returns error message if can't prepare product.
      *
-     * @param array $data
-     * @return array
+     * @param  array  $data
+     * @return array|string
      */
     public function prepareForCart($data)
     {
-        if (! isset($data['qty']) || ! is_array($data['qty']))
-            return trans('shop::app.checkout.cart.integrity.missing_options');
+        if (
+            ! isset($data['qty'])
+            || ! is_array($data['qty'])
+        ) {
+            return trans('product::app.checkout.cart.missing-options');
+        }
 
-        $products = [];
+        $cartProductsList = [];
+
+        $associatedProductIds = $this->product->grouped_products->pluck('associated_product_id');
 
         foreach ($data['qty'] as $productId => $qty) {
-            if (! $qty)
+            if (
+                (int) $qty < 1
+                || ! $associatedProductIds->contains($productId)
+            ) {
                 continue;
+            }
 
             $product = $this->productRepository->find($productId);
 
-            $cartProducts = $product->getTypeInstance()->prepareForCart([
-                    'product_id' => $productId,
-                    'quantity' => $qty,
-                ]);
+            if ($product->type !== 'simple') {
+                return trans('product::app.checkout.cart.selected-products-simple');
+            }
 
-            if (is_string($cartProducts))
+            $cartProducts = $product->getTypeInstance()->prepareForCart([
+                'product_id' => $productId,
+                'quantity' => $qty,
+            ]);
+
+            if (is_string($cartProducts)) {
                 return $cartProducts;
-                
-            $products = array_merge($products, $cartProducts);
+            }
+
+            $cartProductsList[] = $cartProducts;
         }
 
-        if (! count($products))
-            return trans('shop::app.checkout.cart.integrity.qty_missing');
+        $products = array_merge(...$cartProductsList);
+
+        if (! count($products)) {
+            return trans('product::app.checkout.cart.integrity.qty-missing');
+        }
 
         return $products;
+    }
+
+    /**
+     * Returns price indexer class for a specific product type.
+     *
+     * @return string
+     */
+    public function getPriceIndexer()
+    {
+        return app(GroupedIndexer::class);
+    }
+
+    /**
+     * Returns validation rules.
+     *
+     * @return array
+     */
+    public function getTypeValidationRules()
+    {
+        return [
+            'links' => 'array',
+            'links' => function ($attribute, $value, $fail) {
+                $associatedProductIds = collect($value)->pluck('associated_product_id')->toArray();
+
+                $products = $this->productRepository->findWhereIn('id', $associatedProductIds)
+                    ->pluck('type')
+                    ->filter(fn ($type) => $type !== 'simple')
+                    ->count();
+
+                if ($products) {
+                    $fail(trans('product::app.checkout.cart.selected-products-simple'));
+                }
+            },
+        ];
+    }
+
+    /**
+     * Copy relationships.
+     *
+     * @param  \Webkul\Product\Models\Product  $product
+     * @return void
+     */
+    protected function copyRelationships($product)
+    {
+        parent::copyRelationships($product);
+
+        $attributesToSkip = config('products.copy.skip_attributes') ?? [];
+
+        if (in_array('grouped_products', $attributesToSkip)) {
+            return;
+        }
+
+        foreach ($this->product->grouped_products as $groupedProduct) {
+            $product->grouped_products()->save($groupedProduct->replicate());
+        }
     }
 }

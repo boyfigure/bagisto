@@ -2,56 +2,86 @@
 
 namespace Webkul\Sales\Models;
 
+use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
+use Webkul\BookingProduct\Models\BookingProxy;
+use Webkul\Product\Type\AbstractType;
 use Webkul\Sales\Contracts\OrderItem as OrderItemContract;
-use Webkul\Product\Models\Product;
+use Webkul\Sales\Database\Factories\OrderItemFactory;
 
 class OrderItem extends Model implements OrderItemContract
 {
-    protected $guarded = ['id', 'child', 'children', 'created_at', 'updated_at'];
+    use HasFactory;
 
+    /**
+     * Define the guarded property.
+     *
+     * @var array
+     */
+    protected $guarded = [
+        'id',
+        'child',
+        'children',
+        'created_at',
+        'updated_at',
+    ];
+
+    /**
+     * Casts the additional column to the model.
+     *
+     * @var array
+     */
     protected $casts = [
         'additional' => 'array',
     ];
 
+    /**
+     * Define the type instance
+     *
+     * @var mixed
+     */
     protected $typeInstance;
 
     /**
      * Retrieve type instance
-     *
-     * @return AbstractType
      */
-    public function getTypeInstance()
+    public function getTypeInstance(): AbstractType
     {
-        if ($this->typeInstance)
+        if ($this->typeInstance) {
             return $this->typeInstance;
+        }
 
-        $this->typeInstance = app(config('product_types.' . $this->type . '.class'));
+        $this->typeInstance = app(config('product_types.'.$this->type.'.class'));
 
-        if ($this->product)
-            $this->typeInstance->setProduct($this);
+        if ($this->product) {
+            $this->typeInstance->setProduct($this->product);
+        }
 
         return $this->typeInstance;
     }
 
-    /**
-     * @return bool
-     */
-    public function isStockable()
+    public function isStockable(): bool
     {
         return $this->getTypeInstance()->isStockable();
     }
 
     /**
-     * Checks if new shipment is allow or not
+     * Checks if new shipment is allowed or not
      */
-    public function canShip()
+    public function canShip(): bool
     {
-        if (! $this->isStockable())
+        if (! $this->isStockable()) {
             return false;
+        }
 
-        if ($this->qty_to_ship > 0)
+        if ($this->qty_to_ship > 0) {
             return true;
+        }
 
         return false;
     }
@@ -61,8 +91,9 @@ class OrderItem extends Model implements OrderItemContract
      */
     public function getQtyToShipAttribute()
     {
-        if (! $this->isStockable())
+        if (! $this->isStockable()) {
             return 0;
+        }
 
         return $this->qty_ordered - $this->qty_shipped - $this->qty_refunded - $this->qty_canceled;
     }
@@ -72,8 +103,9 @@ class OrderItem extends Model implements OrderItemContract
      */
     public function canInvoice()
     {
-        if ($this->qty_to_invoice > 0)
+        if ($this->qty_to_invoice > 0) {
             return true;
+        }
 
         return false;
     }
@@ -87,14 +119,40 @@ class OrderItem extends Model implements OrderItemContract
     }
 
     /**
-     * Checks if new cancel is allow or not
+     * Checks if this item can be cancelled.
+     *
+     * @param  bool  $force  When true, customer-facing cancellation policies
+     *                       are ignored (admin override). Quantity/state
+     *                       checks still apply.
      */
-    public function canCancel()
+    public function canCancel(bool $force = false): bool
     {
-        if ($this->qty_to_cancel > 0)
-            return true;
+        if ($this->qty_to_cancel <= 0) {
+            return false;
+        }
 
-        return false;
+        return $force || $this->isCancelableByCustomer();
+    }
+
+    /**
+     * Checks whether this item respects customer-facing cancellation policies.
+     * Returns false when a per-item restriction is in effect (currently only
+     * the booking `allow_cancellation` snapshot); returns true otherwise.
+     *
+     * Future item types that introduce their own restrictions should extend
+     * this method — all cancel call sites flow through it, so adding a case
+     * here updates every consumer at once.
+     */
+    public function isCancelableByCustomer(): bool
+    {
+        if (
+            $this->booking
+            && ! $this->booking->allow_cancellation
+        ) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -116,15 +174,15 @@ class OrderItem extends Model implements OrderItemContract
     /**
      * Get the order record associated with the order item.
      */
-    public function order()
+    public function order(): BelongsTo
     {
         return $this->belongsTo(OrderProxy::modelClass());
     }
 
     /**
-     * Get the order record associated with the order item.
+     * Get the product record associated with the order item.
      */
-    public function product()
+    public function product(): MorphTo
     {
         return $this->morphTo();
     }
@@ -132,7 +190,7 @@ class OrderItem extends Model implements OrderItemContract
     /**
      * Get the child item record associated with the order item.
      */
-    public function child()
+    public function child(): HasOne
     {
         return $this->hasOne(OrderItemProxy::modelClass(), 'parent_id');
     }
@@ -140,7 +198,7 @@ class OrderItem extends Model implements OrderItemContract
     /**
      * Get the parent item record associated with the order item.
      */
-    public function parent()
+    public function parent(): BelongsTo
     {
         return $this->belongsTo(self::class, 'parent_id');
     }
@@ -148,7 +206,7 @@ class OrderItem extends Model implements OrderItemContract
     /**
      * Get the children items.
      */
-    public function children()
+    public function children(): HasMany
     {
         return $this->hasMany(self::class, 'parent_id');
     }
@@ -156,7 +214,7 @@ class OrderItem extends Model implements OrderItemContract
     /**
      * Get the invoice items record associated with the order item.
      */
-    public function invoice_items()
+    public function invoice_items(): HasMany
     {
         return $this->hasMany(InvoiceItemProxy::modelClass());
     }
@@ -164,7 +222,7 @@ class OrderItem extends Model implements OrderItemContract
     /**
      * Get the shipment items record associated with the order item.
      */
-    public function shipment_items()
+    public function shipment_items(): HasMany
     {
         return $this->hasMany(ShipmentItemProxy::modelClass());
     }
@@ -172,7 +230,7 @@ class OrderItem extends Model implements OrderItemContract
     /**
      * Get the refund items record associated with the order item.
      */
-    public function refund_items()
+    public function refund_items(): HasMany
     {
         return $this->hasMany(RefundItemProxy::modelClass());
     }
@@ -180,17 +238,26 @@ class OrderItem extends Model implements OrderItemContract
     /**
      * Returns configurable option html
      */
-    public function downloadable_link_purchased()
+    public function downloadable_link_purchased(): HasMany
     {
         return $this->hasMany(DownloadableLinkPurchasedProxy::modelClass());
     }
 
     /**
-     * @return array
+     * Get the booking record associated with this order item (for booking type products).
      */
-    public function toArray()
+    public function booking(): HasOne
+    {
+        return $this->hasOne(BookingProxy::modelClass());
+    }
+
+    public function toArray(): array
     {
         $array = parent::toArray();
+
+        if (! $this->id) {
+            return $array;
+        }
 
         $array['qty_to_ship'] = $this->qty_to_ship;
 
@@ -200,6 +267,18 @@ class OrderItem extends Model implements OrderItemContract
 
         $array['qty_to_refund'] = $this->qty_to_refund;
 
+        if ($this->type == 'downloadable') {
+            $array['downloadable_links'] = $this->downloadable_link_purchased;
+        }
+
         return $array;
+    }
+
+    /**
+     * Create a new factory instance for the model.
+     */
+    protected static function newFactory(): Factory
+    {
+        return OrderItemFactory::new();
     }
 }

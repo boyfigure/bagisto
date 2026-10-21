@@ -2,174 +2,93 @@
 
 namespace Webkul\Admin\Providers;
 
+use Illuminate\Support\Facades\Blade;
+use Illuminate\Support\Facades\Broadcast;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
-use Webkul\Admin\Providers\EventServiceProvider;
-use Illuminate\Contracts\Debug\ExceptionHandler;
-use Webkul\Admin\Exceptions\Handler;
-use Webkul\Core\Tree;
+use Webkul\Admin\CommandPalette\CommandPalette;
+use Webkul\Admin\CommandPalette\Providers\ActionProvider;
+use Webkul\Admin\CommandPalette\Providers\ConfigurationProvider;
+use Webkul\Admin\CommandPalette\Providers\NavigationProvider;
+use Webkul\Core\Http\Middleware\PreventRequestsDuringMaintenance;
 
-/**
- * Admin service provider
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class AdminServiceProvider extends ServiceProvider
 {
     /**
-     * Bootstrap services.
-     *
-     * @return void
-     */
-    public function boot()
-    {
-        $this->loadRoutesFrom(__DIR__ . '/../Http/routes.php');
-
-        $this->loadTranslationsFrom(__DIR__ . '/../Resources/lang', 'admin');
-
-        $this->publishes([
-            __DIR__ . '/../../publishable/assets' => public_path('vendor/webkul/admin/assets'),
-        ], 'public');
-
-        $this->loadViewsFrom(__DIR__ . '/../Resources/views', 'admin');
-
-        $this->composeView();
-
-        $this->registerACL();
-
-        $this->app->register(EventServiceProvider::class);
-
-        $this->app->bind(
-            ExceptionHandler::class,
-            Handler::class
-        );
-    }
-
-    /**
      * Register services.
-     *
-     * @return void
      */
-    public function register()
+    public function register(): void
     {
         $this->registerConfig();
+
+        $this->registerCommandPalette();
     }
 
     /**
-     * Bind the the data to the views
-     *
-     * @return void
+     * Bootstrap services.
      */
-    protected function composeView()
+    public function boot(): void
     {
-        view()->composer(['admin::layouts.nav-left', 'admin::layouts.nav-aside', 'admin::layouts.tabs'], function ($view) {
-            $tree = Tree::create();
+        Route::middleware(['web', PreventRequestsDuringMaintenance::class])->group(__DIR__.'/../Routes/web.php');
 
-            $permissionType = auth()->guard('admin')->user()->role->permission_type;
-            $allowedPermissions = auth()->guard('admin')->user()->role->permissions;
+        $this->registerBroadcasting();
 
-            foreach (config('menu.admin') as $index => $item) {
-                if (! bouncer()->hasPermission($item['key'])) {
-                    continue;
-                }
+        $this->loadTranslationsFrom(__DIR__.'/../Resources/lang', 'admin');
 
-                if ($index + 1 < count(config('menu.admin')) && $permissionType != 'all') {
-                    $permission = config('menu.admin')[$index + 1];
+        $this->loadViewsFrom(__DIR__.'/../Resources/views', 'admin');
 
-                    if (substr_count($permission['key'], '.') == 2 && substr_count($item['key'], '.') == 1) {
-                        foreach ($allowedPermissions as $key => $value) {
-                            if ($item['key'] == $value) {
-                                $neededItem = $allowedPermissions[$key + 1];
+        Blade::anonymousComponentPath(__DIR__.'/../Resources/views/components', 'admin');
 
-                                foreach (config('menu.admin') as $key1 => $findMatced) {
-                                    if ($findMatced['key'] == $neededItem) {
-                                        $item['route'] = $findMatced['route'];
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                $tree->add($item, 'menu');
-            }
-
-            $tree->items = core()->sortItems($tree->items);
-
-            $view->with('menu', $tree);
-        });
-
-        view()->composer(['admin::users.roles.create', 'admin::users.roles.edit'], function ($view) {
-            $view->with('acl', $this->createACL());
-        });
-        
-        view()->composer(['admin::catalog.products.create'], function ($view) {
-            $items = array();
-
-            foreach (config('product_types') as $item) {
-                $item['children'] = [];
-
-                array_push($items, $item);
-            }
-
-            $types = core()->sortItems($items);
-
-            $view->with('productTypes', $types);
-        });
+        $this->app->register(EventServiceProvider::class);
     }
 
     /**
-     * Registers acl to entire application
-     *
-     * @return void
+     * Register the broadcast authorization route and the channels the panel listens on.
      */
-    public function registerACL()
+    protected function registerBroadcasting(): void
     {
-        $this->app->singleton('acl', function () {
-            return $this->createACL();
-        });
-    }
+        Broadcast::routes();
 
-    /**
-     * Create acl tree
-     *
-     * @return mixed
-     */
-    public function createACL()
-    {
-        static $tree;
-
-        if ($tree)
-            return $tree;
-
-        $tree = Tree::create();
-
-        foreach (config('acl') as $item) {
-            $tree->add($item, 'acl');
-        }
-
-        $tree->items = core()->sortItems($tree->items);
-
-        return $tree;
+        require __DIR__.'/../Routes/channels.php';
     }
 
     /**
      * Register package config.
-     *
-     * @return void
      */
-    protected function registerConfig()
+    protected function registerConfig(): void
     {
         $this->mergeConfigFrom(
-            dirname(__DIR__) . '/Config/menu.php', 'menu.admin'
+            dirname(__DIR__).'/Config/menu.php',
+            'menu.admin'
         );
 
         $this->mergeConfigFrom(
-            dirname(__DIR__) . '/Config/acl.php', 'acl'
+            dirname(__DIR__).'/Config/acl.php',
+            'acl'
         );
 
         $this->mergeConfigFrom(
-            dirname(__DIR__) . '/Config/system.php', 'core'
+            dirname(__DIR__).'/Config/system.php',
+            'core'
         );
+
+        $this->mergeConfigFrom(
+            dirname(__DIR__).'/Config/command-palette.php',
+            'command_palette'
+        );
+    }
+
+    /**
+     * Register what the command palette searches over.
+     */
+    protected function registerCommandPalette(): void
+    {
+        $this->app->singleton(CommandPalette::class);
+
+        $this->callAfterResolving(CommandPalette::class, function (CommandPalette $palette) {
+            $palette->register(NavigationProvider::class);
+            $palette->register(ConfigurationProvider::class);
+            $palette->register(ActionProvider::class);
+        });
     }
 }

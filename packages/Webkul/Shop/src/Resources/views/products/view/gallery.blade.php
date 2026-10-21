@@ -1,185 +1,165 @@
-@inject ('productImageHelper', 'Webkul\Product\Helpers\ProductImage')
-@inject ('wishListHelper', 'Webkul\Customer\Helpers\Wishlist')
+<v-product-gallery ref="gallery">
+    <x-shop::shimmer.products.gallery />
+</v-product-gallery>
 
-<?php $images = $productImageHelper->getGalleryImages($product); ?>
-
-{!! view_render_event('bagisto.shop.products.view.gallery.before', ['product' => $product]) !!}
-
-<div class="product-image-group">
-
-    <div class="cp-spinner cp-round" id="loader">
-    </div>
-
-    <product-gallery></product-gallery>
-
-    @include ('shop::products.view.product-add')
-
-</div>
-
-{!! view_render_event('bagisto.shop.products.view.gallery.after', ['product' => $product]) !!}
-
-@push('scripts')
-
-    <script type="text/x-template" id="product-gallery-template">
+@pushOnce('scripts')
+    <script
+        type="text/x-template"
+        id="v-product-gallery-template"
+    >
         <div>
+            <!-- Desktop Gallery -->
+            @include('shop::products.view.gallery.desktop')
 
-            <ul class="thumb-list">
-                <li class="gallery-control top" @click="moveThumbs('top')" v-if="(thumbs.length > 4) && this.is_move.up">
-                    <span class="overlay"></span>
-                    <i class="icon arrow-up-white-icon"></i>
-                </li>
-
-                <li class="thumb-frame" v-for='(thumb, index) in thumbs' @mouseover="changeImage(thumb)" :class="[thumb.large_image_url == currentLargeImageUrl ? 'active' : '']" id="thumb-frame">
-                    <img :src="thumb.small_image_url"/>
-                </li>
-
-                <li class="gallery-control bottom" @click="moveThumbs('bottom')" v-if="(thumbs.length > 4) && this.is_move.down">
-                    <span class="overlay"></span>
-                    <i class="icon arrow-down-white-icon"></i>
-                </li>
-            </ul>
-
-            <div class="product-hero-image" id="product-hero-image">
-                <img :src="currentLargeImageUrl" id="pro-img" :data-image="currentOriginalImageUrl"/>
-
-                @auth('customer')
-                    <a @if ($wishListHelper->getWishlistProduct($product)) class="add-to-wishlist already" @else class="add-to-wishlist" @endif href="{{ route('customer.wishlist.add', $product->product_id) }}">
-                    </a>
-                @endauth
-            </div>
-
+            <!-- Mobile Gallery -->
+            @include('shop::products.view.gallery.mobile')
+            
+            <!-- Gallery Images Zoomer -->
+            <x-shop::image-zoomer
+                ::attachments="attachments"
+                ::is-image-zooming="isImageZooming"
+                ::initial-index="`media_${activeIndex}`"
+            />
         </div>
     </script>
 
-    <script>
-        var galleryImages = @json($images);
+    <script type="module">
+        app.component('v-product-gallery', {
+            template: '#v-product-gallery-template',
 
-        Vue.component('product-gallery', {
-
-            template: '#product-gallery-template',
-
-            data: function() {
+            data() {
                 return {
-                    images: galleryImages,
+                    isImageZooming: false,
 
-                    thumbs: [],
+                    isMediaLoading: true,
 
-                    currentLargeImageUrl: '',
+                    placeholderUrl: @js(product_image()->getPlaceholderUrl('large')),
 
-                    currentOriginalImageUrl: '',
+                    media: {
+                        images: @json(product_image()->getGalleryImages($product)),
 
-                    counter: {
-                        up: 0,
-                        down: 0,
+                        videos: @json(product_video()->getVideos($product)),
                     },
 
-                    is_move: {
-                        up: true,
-                        down: true,
-                    }
-                }
+                    baseFile: {
+                        type: '',
+
+                        path: '',
+
+                        alt: "{{ $product->name }}"
+                    },
+
+                    activeIndex: 0,
+
+                    containerOffset: 110,
+                };
             },
 
             watch: {
-                'images': function(newVal, oldVal) {
-                    this.changeImage(this.images[0])
+                'media.images': {
+                    deep: true,
 
-                    this.prepareThumbs()
+                    handler(newImages, oldImages) {
+                        let selectedImage = newImages?.[this.activeIndex];
+
+                        if (JSON.stringify(newImages) !== JSON.stringify(oldImages) && selectedImage?.large_image_url) {
+                            this.baseFile.path = selectedImage.large_image_url;
+
+                            this.baseFile.alt = selectedImage.alt;
+                        }
+                    },
+                },
+            },
+        
+            mounted() {
+                if (this.media.images.length) {
+
+                    this.baseFile.type = 'image';
+
+                    this.baseFile.path = this.media.images[0].large_image_url;
+
+                    this.baseFile.alt = this.media.images[0].alt;
+                } else if (this.media.videos.length) {
+
+                    this.baseFile.type = 'video';
+
+                    this.baseFile.path = this.media.videos[0].video_url;
                 }
             },
 
-            created: function() {
-                this.changeImage(this.images[0])
+            computed: {
+                lengthOfMedia() {
+                    if (this.media.images.length) {
+                        return [...this.media.images, ...this.media.videos].length > 5;
+                    }
+                },
 
-                this.prepareThumbs()
+                attachments() {
+                    return [...this.media.images, ...this.media.videos].map(media => ({
+                        url: media.type === 'videos' ? media.video_url : media.original_image_url,
+
+                        type: media.type === 'videos' ? 'video' : 'image',
+
+                        alt: media.alt ?? "{{ $product->name }}",
+                    }));
+                },
             },
 
             methods: {
-                prepareThumbs: function() {
-                    var this_this = this;
-
-                    this_this.thumbs = [];
-
-                    this.images.forEach(function(image) {
-                        this_this.thumbs.push(image);
-                    });
+                isActiveMedia(index) {
+                    return index === this.activeIndex;
+                },
+                
+                onMediaLoad() {
+                    this.isMediaLoading = false;
                 },
 
-                changeImage: function(image) {
-                    this.currentLargeImageUrl = image.large_image_url;
+                onMediaError(event) {
+                    this.isMediaLoading = false;
 
-                    this.currentOriginalImageUrl = image.original_image_url;
-
-                    if ($(window).width() > 580) {
-                        $('img#pro-img').data('zoom-image', image.original_image_url).ezPlus();
+                    if (event?.target && event.target.src !== this.placeholderUrl) {
+                        event.target.src = this.placeholderUrl;
                     }
                 },
 
-                moveThumbs: function(direction) {
-                    let len = this.thumbs.length;
+                change(media, index) {
+                    this.isMediaLoading = true;
 
-                    if (direction === "top") {
-                        const moveThumb = this.thumbs.splice(len - 1, 1);
+                    if (media.type == 'videos') {
+                        this.baseFile.type = 'video';
 
-                        this.thumbs = [moveThumb[0]].concat((this.thumbs));
+                        this.baseFile.path = media.video_url;
 
-                        this.counter.up = this.counter.up+1;
-
-                        this.counter.down = this.counter.down-1;
-
+                        this.onMediaLoad();
                     } else {
-                        const moveThumb = this.thumbs.splice(0, 1);
+                        this.baseFile.type = 'image';
 
-                        this.thumbs = [].concat((this.thumbs), [moveThumb[0]]);
+                        this.baseFile.path = media.large_image_url;
 
-                        this.counter.down = this.counter.down+1;
-
-                        this.counter.up = this.counter.up-1;
+                        this.baseFile.alt = media.alt;
                     }
 
-                    if ((len-4) == this.counter.down) {
-                        this.is_move.down = false;
-                    } else {
-                        this.is_move.down = true;
+                    if (index > this.activeIndex) {
+                        this.swipeDown();
+                    } else if (index < this.activeIndex) {
+                        this.swipeTop();
                     }
 
-                    if ((len-4) == this.counter.up) {
-                        this.is_move.up = false;
-                    } else {
-                        this.is_move.up = true;
-                    }
+                    this.activeIndex = index;
                 },
-            }
+
+                swipeTop() {
+                    const container = this.$refs.swiperContainer;
+
+                    container.scrollTop -= this.containerOffset;
+                },
+
+                swipeDown() {
+                    const container = this.$refs.swiperContainer;
+
+                    container.scrollTop += this.containerOffset;
+                },
+            },
         });
-
     </script>
-
-    <script>
-        $(document).ready(function() {
-            if ($(window).width() > 580) {
-                $('img#pro-img').data('zoom-image', $('img#pro-img').data('image')).ezPlus();
-            }
-
-            var wishlist = " <?php echo $wishListHelper->getWishlistProduct($product);  ?> ";
-
-            $(document).mousemove(function(event) {
-                if ($('.add-to-wishlist').length && wishlist != 1) {
-                    if (event.pageX > $('.add-to-wishlist').offset().left && event.pageX < $('.add-to-wishlist').offset().left+32 && event.pageY > $('.add-to-wishlist').offset().top && event.pageY < $('.add-to-wishlist').offset().top+32) {
-
-                        $(".zoomContainer").addClass("show-wishlist");
-
-                    } else {
-                        $(".zoomContainer").removeClass("show-wishlist");
-                    }
-                };
-
-                if ($("body").hasClass("rtl")) {
-                    $(".zoomWindow").addClass("zoom-image-direction");
-                } else {
-                    $(".zoomWindow").removeClass("zoom-image-direction");
-                }
-            });
-        })
-    </script>
-
-@endpush
+@endpushOnce

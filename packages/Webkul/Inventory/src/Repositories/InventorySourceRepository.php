@@ -3,22 +3,15 @@
 namespace Webkul\Inventory\Repositories;
 
 use Webkul\Core\Eloquent\Repository;
+use Webkul\Inventory\Contracts\InventorySource;
 
-/**
- * Inventory Reposotory
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class InventorySourceRepository extends Repository
 {
     /**
-     * Specify Model class name
-     *
-     * @return mixed
+     * Specify the model class name.
      */
-    function model()
+    public function model(): string
     {
-        return 'Webkul\Inventory\Contracts\InventorySource';
+        return InventorySource::class;
     }
 }

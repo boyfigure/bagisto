@@ -2,23 +2,50 @@
 
 namespace Webkul\Payment\Payment;
 
-/**
- * Money Transfer payment method class
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
+use Illuminate\Support\Facades\Storage;
+
 class MoneyTransfer extends Payment
 {
     /**
-     * Payment method code
+     * Payment method code.
      *
      * @var string
      */
-    protected $code  = 'moneytransfer';
+    protected $code = 'moneytransfer';
 
-    public function getRedirectUrl()
+    /**
+     * Get redirect url.
+     *
+     * @return string
+     */
+    public function getRedirectUrl() {}
+
+    /**
+     * Returns payment method additional information.
+     *
+     * @return array
+     */
+    public function getAdditionalDetails()
     {
-        
+        if (empty($this->getConfigData('mailing_address'))) {
+            return [];
+        }
+
+        return [
+            'title' => trans('admin::app.configuration.index.sales.payment-methods.mailing-address'),
+            'value' => $this->getConfigData('mailing_address'),
+        ];
+    }
+
+    /**
+     * Returns payment method image.
+     *
+     * @return string
+     */
+    public function getImage()
+    {
+        $url = $this->getConfigData('image');
+
+        return $url ? Storage::url($url) : bagisto_asset('images/money-transfer.png', 'shop');
     }
 }

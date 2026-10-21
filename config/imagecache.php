@@ -1,13 +1,17 @@
 <?php
 
-return array(
+use Webkul\Shop\CacheFilters\Large;
+use Webkul\Shop\CacheFilters\Medium;
+use Webkul\Shop\CacheFilters\Small;
 
+return [
     /*
     |--------------------------------------------------------------------------
-    | Name of route
+    | Name of Route
     |--------------------------------------------------------------------------
     |
-    | Enter the routes name to enable dynamic imagecache manipulation.
+    | Enter the route name to enable dynamic image cache manipulation.
+    |
     | This handle will define the first part of the URI:
     |
     | {route}/{template}/{filename}
@@ -20,52 +24,51 @@ return array(
 
     /*
     |--------------------------------------------------------------------------
-    | Storage paths
+    | Storage Paths
     |--------------------------------------------------------------------------
     |
-    | The following paths will be searched for the image filename, submited
-    | by URI.
+    | The following paths will be searched for the image filename submitted
+    | by the URI.
     |
     | Define as many directories as you like.
     |
     */
 
-    'paths' => array(
+    'paths' => [
         storage_path('app/public'),
-        public_path('storage')
-    ),
+        public_path('storage'),
+    ],
 
     /*
     |--------------------------------------------------------------------------
-    | Manipulation templates
+    | Manipulation Templates
     |--------------------------------------------------------------------------
     |
     | Here you may specify your own manipulation filter templates.
-    | The keys of this array will define which templates
-    | are available in the URI:
+    | The keys of this array will define which templates are available
+    | in the URI:
     |
     | {route}/{template}/{filename}
     |
-    | The values of this array will define which filter class
-    | will be applied, by its fully qualified name.
+    | The values of this array will define which filter class will be
+    | applied, by its fully qualified name.
     |
     */
 
-    'templates' => array(
-        'small' => 'Webkul\Product\CacheFilters\Small',
-        'medium' => 'Webkul\Product\CacheFilters\Medium',
-        'large' => 'Webkul\Product\CacheFilters\Large',
-    ),
+    'templates' => [
+        'small' => Small::class,
+        'medium' => Medium::class,
+        'large' => Large::class,
+    ],
 
     /*
     |--------------------------------------------------------------------------
     | Image Cache Lifetime
     |--------------------------------------------------------------------------
     |
-    | Lifetime in minutes of the images handled by the imagecache route.
+    | Lifetime in minutes of the images handled by the image cache route.
     |
     */
 
     'lifetime' => 43200,
-
-);
+];

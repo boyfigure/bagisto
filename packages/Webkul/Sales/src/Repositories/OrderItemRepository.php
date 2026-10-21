@@ -2,56 +2,32 @@
 
 namespace Webkul\Sales\Repositories;
 
-use Illuminate\Container\Container as App;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Storage;
 use Webkul\Core\Eloquent\Repository;
 use Webkul\Sales\Contracts\OrderItem;
-
-/**
- * OrderItem Reposotory
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
+use Webkul\Sales\Exceptions\InsufficientInventoryException;
 
 class OrderItemRepository extends Repository
 {
     /**
-     * Specify Model class name
-     *
-     * @return Mixed
+     * Specify model class name.
      */
-    function model()
+    public function model(): string
     {
         return OrderItem::class;
     }
 
     /**
-     * @param array $data
-     * @return mixed
+     * Collect totals.
      */
-    public function create(array $data)
-    {
-        if (isset($data['product']) && $data['product']) {
-            $data['product_id'] = $data['product']->id;
-            $data['product_type'] = get_class($data['product']);
-
-            unset($data['product']);
-        }
-
-        return parent::create($data);
-    }
-
-    /**
-     * @param mixed $orderItem
-     * @return mixed
-     */
-    public function collectTotals($orderItem)
+    public function collectTotals(OrderItem $orderItem): OrderItem
     {
         $qtyShipped = $qtyInvoiced = $qtyRefunded = 0;
 
         $totalInvoiced = $baseTotalInvoiced = 0;
         $taxInvoiced = $baseTaxInvoiced = 0;
-        
+
         $totalRefunded = $baseTotalRefunded = 0;
         $taxRefunded = $baseTaxRefunded = 0;
 
@@ -101,63 +77,214 @@ class OrderItemRepository extends Repository
     }
 
     /**
-     * @param mixed $orderItem
-     * @return void
+     * Manage inventory.
      */
-    public function manageInventory($orderItem)
+    public function manageInventory(OrderItem $orderItem): void
     {
         $orderItems = [];
 
         if ($orderItem->getTypeInstance()->isComposite()) {
             foreach ($orderItem->children as $child) {
+                if (! $child->product->manage_stock) {
+                    continue;
+                }
+
                 $orderItems[] = $child;
             }
         } else {
-            $orderItems[] = $orderItem;
+            if ($orderItem->product->manage_stock) {
+                $orderItems[] = $orderItem;
+            }
         }
 
         foreach ($orderItems as $item) {
-            if (! $item->product)
+            if (! $item->product) {
                 continue;
+            }
 
-            $orderedInventory = $item->product->ordered_inventories()
-                    ->where('channel_id', $orderItem->order->channel->id)
+            if ($item->product->inventories->count()) {
+                $channel = $orderItem->order->channel;
+
+                $available = $item->product->inventories()
+                    ->whereIn('inventory_source_id', $channel->inventory_sources->where('status', 1)->pluck('id'))
+                    ->lockForUpdate()
+                    ->pluck('qty')
+                    ->sum();
+
+                $orderedInventory = $item->product->ordered_inventories()
+                    ->where('channel_id', $channel->id)
+                    ->lockForUpdate()
                     ->first();
 
-            $qty = $item->qty_ordered ?: $item->parent->qty_ordered;
+                if (! empty($item->qty_ordered)) {
+                    $qty = $item->qty_ordered;
+                } else {
+                    $qty = $item?->parent?->qty_ordered ?? 1;
+                }
 
-            if ($orderedInventory) {
-                $orderedInventory->update([
-                        'qty' => $orderedInventory->qty + $qty
-                    ]);
-            } else {
-                $item->product->ordered_inventories()->create([
+                if (
+                    $available - ($orderedInventory->qty ?? 0) < $qty
+                    && ! core()->getConfigData('catalog.inventory.stock_options.back_orders')
+                ) {
+                    throw new InsufficientInventoryException(
+                        trans('shop::app.checkout.cart.inventory-warning')
+                    );
+                }
+
+                if ($orderedInventory) {
+                    $orderedInventory->increment('qty', $qty);
+                } else {
+                    $item->product->ordered_inventories()->create([
                         'qty' => $qty,
                         'product_id' => $item->product_id,
                         'channel_id' => $orderItem->order->channel->id,
                     ]);
+                }
             }
         }
     }
 
     /**
-     * Returns qty to product inventory after order cancelation
-     *
-     * @param OrderItem $orderItem
-     * @return void
+     * Release what an order item reserved, and return its shipped quantity to inventory when
+     * the product is stock managed.
      */
-    public function returnQtyToProductInventory($orderItem)
+    public function returnQtyToProductInventory(OrderItem $orderItem): void
+    {
+        if (! $orderItem->product) {
+            return;
+        }
+
+        $this->updateProductOrderedInventories($orderItem);
+
+        if (
+            $orderItem->product->manage_stock
+            && $orderItem->getTypeInstance()->isStockable()
+        ) {
+            $shipmentItems = $orderItem?->parent->shipment_items ?? $orderItem->shipment_items;
+
+            foreach ($shipmentItems as $shipmentItem) {
+                if ($orderItem->parent) {
+                    $shippedQty = $orderItem->qty_ordered
+                        ? ($orderItem->qty_ordered / $orderItem->parent->qty_ordered) * $shipmentItem->qty
+                        : $orderItem->parent->qty_ordered;
+                } else {
+                    $shippedQty = $shipmentItem->qty;
+                }
+
+                $shippedQty -= $orderItem->qty_invoiced;
+
+                $inventory = $orderItem->product->inventories()
+                    ->where('inventory_source_id', $shipmentItem->shipment->inventory_source_id)
+                    ->first();
+
+                $inventory->update(['qty' => $inventory->qty + $shippedQty]);
+            }
+        }
+    }
+
+    /**
+     * Update product ordered quantity.
+     */
+    public function updateProductOrderedInventories(OrderItem $orderItem): void
     {
         $orderedInventory = $orderItem->product->ordered_inventories()
-                ->where('channel_id', $orderItem->order->channel->id)
-                ->first();
+            ->where('channel_id', $orderItem->order->channel->id)
+            ->first();
 
-        if (! $orderedInventory)
+        if (! $orderedInventory) {
             return;
+        }
 
-        if (($qty = $orderedInventory->qty - ($orderItem->qty_ordered ? $orderItem->qty_to_cancel : $orderItem->parent->qty_ordered)) < 0)
+        $qtyShipped = ! empty($orderItem->qty_shipped)
+            ? $orderItem->qty_shipped
+            : ($orderItem->parent?->qty_shipped ?? 0);
+
+        $qtyOrdered = ! empty($orderItem->qty_ordered)
+            ? $orderItem->qty_ordered
+            : ($orderItem->parent?->qty_ordered ?? 0);
+
+        $qty = ($orderedInventory->qty + $qtyShipped) - $qtyOrdered;
+
+        if ($qty < 0) {
             $qty = 0;
+        }
 
         $orderedInventory->update(['qty' => $qty]);
+    }
+
+    /**
+     * Manage customizable options.
+     */
+    public function manageCustomizableOptions(OrderItem $orderItem): void
+    {
+        if (
+            ! $orderItem->product->getTypeInstance()->isCustomizable()
+            || (
+                $orderItem->product->getTypeInstance()->isCustomizable()
+                && empty($orderItem->additional['formatted_customizable_options'])
+            )
+        ) {
+            return;
+        }
+
+        $additional = $orderItem->additional;
+
+        $additional['formatted_customizable_options'] = collect($orderItem->additional['formatted_customizable_options'])
+            ->map(function ($option) use ($orderItem) {
+                if ($option['type'] === 'file') {
+                    $oldPath = $option['prices'][0]['label'] ?? '';
+
+                    /**
+                     * The label is populated from the request when adding the product to the cart, so it must be
+                     * treated as untrusted input. Only relocate files that were genuinely uploaded by the customer
+                     * (stored under the "carts/" directory) to prevent arbitrary files on the disk from being moved.
+                     */
+                    if (! $this->isCustomerUploadedFilePath($oldPath)) {
+                        return $option;
+                    }
+
+                    $newPath = 'orders/'.$orderItem->order_id.'/'.File::basename($oldPath);
+
+                    Storage::move($oldPath, $newPath);
+
+                    $option['prices'][0]['label'] = $newPath;
+                }
+
+                return $option;
+            })
+            ->toArray();
+
+        $orderItem->additional = $orderItem->product->getTypeInstance()->getAdditionalOptions($additional);
+
+        $orderItem->save();
+    }
+
+    /**
+     * Determine whether the given path points to a file the customer uploaded for a customizable option.
+     *
+     * Customer uploads are always stored under the "carts/{cart_id}/" directory of the default disk. Any other
+     * path (including path traversal attempts) is rejected so it cannot be relocated.
+     */
+    protected function isCustomerUploadedFilePath(mixed $path): bool
+    {
+        if (
+            ! is_string($path)
+            || $path === ''
+        ) {
+            return false;
+        }
+
+        /**
+         * Reject path traversal segments outright.
+         */
+        if (preg_match('#(^|/)\.\.(/|$)#', $path)) {
+            return false;
+        }
+
+        if (! str_starts_with($path, 'carts/')) {
+            return false;
+        }
+
+        return Storage::exists($path);
     }
 }

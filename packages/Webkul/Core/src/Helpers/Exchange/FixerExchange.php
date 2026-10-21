@@ -2,55 +2,63 @@
 
 namespace Webkul\Core\Helpers\Exchange;
 
-use Webkul\Core\Helpers\Exchange\ExchangeRate;
+use Illuminate\Support\Facades\Http;
+use RuntimeException;
+use Webkul\Core\Repositories\CurrencyRepository;
 use Webkul\Core\Repositories\ExchangeRateRepository;
 
-class FixerExchange  extends ExchangeRate
+class FixerExchange extends ExchangeRate
 {
     /**
-     * API key
+     * API endpoint.
      */
-    protected $apiKey;
+    protected string $apiEndPoint = 'http://data.fixer.io/api';
 
     /**
-     * API endpoint
+     * API key.
      */
-    protected $apiEndPoint;
+    protected ?string $apiKey;
 
     /**
-     * Holds ExchangeRateRepository instance
+     * Create a new instance.
      */
-    protected $exchangeRate;
+    public function __construct(
+        protected CurrencyRepository $currencyRepository,
+        protected ExchangeRateRepository $exchangeRateRepository
+    ) {
+        parent::__construct($currencyRepository, $exchangeRateRepository);
 
-    public function  __construct()
-    {
-        $this->apiKey = config('services.exchange-api')['fixer']['key'];
-
-        $this->apiEndPoint = 'http://data.fixer.io/api/latest?access_key='.$this->apiKey;
+        $this->apiKey = $this->getApiKey(
+            'general.exchange_rates.fixer.api_key',
+            'services.exchange_api.fixer.key'
+        );
     }
 
-    public function fetchRates()
+    /**
+     * Fetch rates and update the `currency_exchange_rates` table.
+     */
+    public function updateRates(): void
     {
-        $rates = array();
+        $baseCurrency = config('app.currency');
 
-        $this->exchangeRate = app('Webkul\Core\Repositories\ExchangeRateRepository');
+        foreach ($this->currencyRepository->all() as $currency) {
+            if ($currency->code === $baseCurrency) {
+                continue;
+            }
 
-        // dummy api call
-        $client = new \GuzzleHttp\Client();
+            $response = Http::get("{$this->apiEndPoint}/".date('Y-m-d'), [
+                'access_key' => $this->apiKey,
+                'base' => $baseCurrency,
+                'symbols' => $currency->code,
+            ]);
 
-        if (config('services.exchange-api')['fixer']['paid_account']) {
-            $result = $client->request('GET', 'http://data.fixer.io/api/'.date('Y-m-d').'?access_key='.$this->apiKey.'&base='.core()->getBaseCurrency()->code.'&symbols=INR');
+            $result = $response->json();
 
-        } else {
-            $result = $client->request('GET', 'http://data.fixer.io/api/'.date('Y-m-d').'?access_key='.$this->apiKey.'&symbols=USD');
+            if (isset($result['success']) && ! $result['success']) {
+                throw new RuntimeException($result['error']['info'] ?? $result['error']['type']);
+            }
+
+            $this->updateOrCreateRate($currency, $result['rates'][$currency->code]);
         }
-
-        $result = json_decode($result->getBody()->getContents());
-
-        return $result;
-    }
-
-    public function updateRates()
-    {
     }
 }

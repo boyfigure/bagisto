@@ -1,30 +1,42 @@
 <?php
 
-use Webkul\Theme\ViewRenderEventManager;
+use Webkul\Theme\Facades\Themes;
+use Webkul\Theme\ThemeStorage;
 
 if (! function_exists('themes')) {
+    /**
+     * Themes.
+     *
+     * @return Webkul\Theme\Themes
+     */
     function themes()
     {
-        return app()->make('themes');
+        return Themes::getFacadeRoot();
     }
 }
 
 if (! function_exists('bagisto_asset')) {
-    function bagisto_asset($path, $secure = null)
+    /**
+     * Bagisto asset.
+     *
+     * @return string
+     */
+    function bagisto_asset(string $path, ?string $namespace = null)
     {
-        return themes()->url($path, $secure);
+        return themes()->url($path, $namespace);
     }
 }
 
-if (! function_exists('view_render_event')) {
-    function view_render_event($eventName, $params = null)
+if (! function_exists('bagisto_theme_storage')) {
+    /**
+     * Bagisto theme storage.
+     *
+     * Resolves what a theme has stored, where `bagisto_asset()` resolves what it ships.
+     *
+     * @return ThemeStorage
+     */
+    function bagisto_theme_storage()
     {
-        app()->singleton(ViewRenderEventManager::class);
-
-        $viewEventMagnager = app()->make(ViewRenderEventManager::class);
-
-        $viewEventMagnager->handleRenderEvent($eventName, $params);
-
-        return $viewEventMagnager->render();
+        return app(ThemeStorage::class);
     }
 }

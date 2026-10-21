@@ -2,16 +2,28 @@
 
 namespace Webkul\Product\Models;
 
+use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Webkul\Attribute\Models\AttributeProxy;
-use Webkul\Channel\Models\ChannelProxy;
 use Webkul\Product\Contracts\ProductAttributeValue as ProductAttributeValueContract;
+use Webkul\Product\Database\Factories\ProductAttributeValueFactory;
 
 class ProductAttributeValue extends Model implements ProductAttributeValueContract
 {
+    use HasFactory;
+
+    /**
+     * Indicates if the model should be timestamped.
+     *
+     * @var bool
+     */
     public $timestamps = false;
 
     /**
+     * Attribute type fields.
+     *
      * @var array
      */
     public static $attributeTypeFields = [
@@ -28,25 +40,39 @@ class ProductAttributeValue extends Model implements ProductAttributeValueContra
         'checkbox' => 'text_value',
     ];
 
+    /**
+     * The attributes that should be cast.
+     *
+     * @var array
+     */
+    protected $casts = [
+        'boolean_value' => 'boolean',
+    ];
+
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var array
+     */
     protected $fillable = [
         'product_id',
         'attribute_id',
-        'channel_id',
         'locale',
         'channel',
+        'unique_id',
         'text_value',
         'boolean_value',
         'integer_value',
         'float_value',
         'datetime_value',
         'date_value',
-        'json_value'
+        'json_value',
     ];
 
     /**
      * Get the attribute that owns the attribute value.
      */
-    public function attribute()
+    public function attribute(): BelongsTo
     {
         return $this->belongsTo(AttributeProxy::modelClass());
     }
@@ -54,16 +80,16 @@ class ProductAttributeValue extends Model implements ProductAttributeValueContra
     /**
      * Get the product that owns the attribute value.
      */
-    public function product()
+    public function product(): BelongsTo
     {
         return $this->belongsTo(ProductProxy::modelClass());
     }
 
     /**
-     * Get the channel that owns the attribute value.
+     * Create a new factory instance for the model.
      */
-    public function channel()
+    protected static function newFactory(): Factory
     {
-        return $this->belongsTo(ChannelProxy::modelClass());
+        return ProductAttributeValueFactory::new();
     }
 }

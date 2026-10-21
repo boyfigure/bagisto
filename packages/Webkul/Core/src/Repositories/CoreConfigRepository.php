@@ -2,175 +2,257 @@
 
 namespace Webkul\Core\Repositories;
 
-use Webkul\Core\Eloquent\Repository;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
+use Webkul\Core\Contracts\CoreConfig;
+use Webkul\Core\Eloquent\Repository;
+use Webkul\Core\SystemConfig\DependsCondition;
+use Webkul\Core\Traits\Sanitizer;
 
-/**
- * Core Config Reposotory
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class CoreConfigRepository extends Repository
 {
+    use Sanitizer;
+
     /**
-     * Specify Model class name
-     *
-     * @return mixed
+     * Specify model class name.
      */
-    function model()
+    public function model(): string
     {
-        return 'Webkul\Core\Contracts\CoreConfig';
+        return CoreConfig::class;
     }
 
     /**
-     * @param array $data
-     * @return mixed
+     * Create core configuration.
      */
     public function create(array $data)
     {
-        unset($data['_token']);
+        Event::dispatch('core.configuration.save.before');
 
-        if ($data['locale'] || $data['channel']) {
-           $locale = $data['locale'];
-           $channel = $data['channel'];
-           unset($data['locale']);
-           unset($data['channel']);
-        }
+        DB::transaction(function () use ($data) {
+            $locale = Arr::pull($data, 'locale') ?: core()->getRequestedLocaleCode();
 
-        foreach ($data as $method => $fieldData) {
+            $channel = Arr::pull($data, 'channel') ?: core()->getRequestedChannelCode();
 
-            $recurssiveData = $this->recuressiveArray($fieldData , $method);
+            foreach ($data as $group => $fieldData) {
+                $configValues = $this->flattenToConfigValues($fieldData, $group);
 
-            foreach ($recurssiveData as $fieldName => $value) {
-                $field = core()->getConfigField($fieldName);
+                foreach ($configValues as $fieldName => $value) {
+                    $field = core()->getConfigField($fieldName);
 
-                $channel_based = false;
-                $locale_based = false;
+                    $condition = new DependsCondition($field['depends'] ?? null);
 
-                if (isset($field['channel_based']) && $field['channel_based']) {
-                    $channel_based = true;
-                }
+                    $sibling = Str::beforeLast($fieldName, '.').'.'.$condition->fieldName();
 
-                if (isset($field['locale_based']) && $field['locale_based']) {
-                    $locale_based = true;
-                }
-
-                if (getType($value) == 'array') {
-                    if(! isset($value['delete'])) {
-                        $value = implode(",", $value);
+                    if (! $condition->permits(array_key_exists($sibling, $configValues), $configValues[$sibling] ?? null)) {
+                        continue;
                     }
-                }
 
-                if (isset($field['channel_based']) && $field['channel_based']) {
-                    if (isset($field['locale_based']) && $field['locale_based']) {
-                        $coreConfigValue = $this->model
-                            ->where('code', $fieldName)
-                            ->where('locale_code', $locale)
-                            ->where('channel_code', $channel)
-                            ->get();
+                    $channelBased = ! empty($field['channel_based']);
+
+                    $localeBased = ! empty($field['locale_based']);
+
+                    if (
+                        gettype($value) == 'array'
+                        && ! isset($value['delete'])
+                    ) {
+                        $value = implode(',', $value);
                     }
-                    else {
-                        $coreConfigValue = $this->model
-                            ->where('code', $fieldName)
-                            ->where('channel_code', $channel)
-                            ->get();
-                    }
-                } else {
-                    if (isset($field['locale_based']) && $field['locale_based']) {
-                        $coreConfigValue = $this->model
-                            ->where('code', $fieldName)
-                            ->where('locale_code', $locale)
-                            ->get();
-                    } else {
-                        $coreConfigValue = $this->model
-                            ->where('code', $fieldName)
-                            ->get();
-                    }
-                }
 
-                if (request()->hasFile($fieldName)) {
-                    $dir = 'configuration';
-                    $value = request()->file($fieldName)->store($dir);
-                }
-
-                if (! count($coreConfigValue)) {
-                    $this->model->create([
-                        'code' => $fieldName,
-                        'value' => $value,
-                        'locale_code' => $locale_based ? $locale : null,
-                        'channel_code' => $channel_based ? $channel : null
-                    ]);
-                } else {
-                    $updataData['code'] = $fieldName;
-                    $updataData['value'] = $value;
-                    $updataData['locale_code'] = $locale_based ? $locale : null;
-                    $updataData['channel_code'] = $channel_based ? $channel : null;
-
-                    foreach ($coreConfigValue as $coreConfig) {
-                        Storage::delete($coreConfig['value']);
-
-                        if(isset($value['delete'])) {
-                            $this->model->destroy($coreConfig['id']);
+                    if (! empty($field['channel_based'])) {
+                        if (! empty($field['locale_based'])) {
+                            $coreConfigValue = $this->model
+                                ->where('code', $fieldName)
+                                ->where('locale_code', $locale)
+                                ->where('channel_code', $channel)
+                                ->get();
                         } else {
-                            $coreConfig->update($updataData);
+                            $coreConfigValue = $this->model
+                                ->where('code', $fieldName)
+                                ->where('channel_code', $channel)
+                                ->get();
+                        }
+                    } else {
+                        if (! empty($field['locale_based'])) {
+                            $coreConfigValue = $this->model
+                                ->where('code', $fieldName)
+                                ->where('locale_code', $locale)
+                                ->get();
+                        } else {
+                            $coreConfigValue = $this->model
+                                ->where('code', $fieldName)
+                                ->get();
+                        }
+                    }
+
+                    if (request()->hasFile($fieldName)) {
+                        $file = request()->file($fieldName);
+
+                        $value = $file->store('configurations');
+
+                        if (! $this->sanitizeSVG($value, $file->getMimeType())) {
+                            throw ValidationException::withMessages([
+                                $fieldName => trans('core::app.errors.invalid-svg'),
+                            ]);
+                        }
+                    }
+
+                    if (! count($coreConfigValue)) {
+                        parent::create([
+                            'code' => $fieldName,
+                            'value' => $value,
+                            'locale_code' => $localeBased ? $locale : null,
+                            'channel_code' => $channelBased ? $channel : null,
+                        ]);
+                    } else {
+                        foreach ($coreConfigValue as $coreConfig) {
+                            if (request()->hasFile($fieldName)) {
+                                Storage::delete($coreConfig['value']);
+                            }
+
+                            if (isset($value['delete'])) {
+                                if (in_array($field['type'] ?? '', ['image', 'file'])) {
+                                    Storage::delete($coreConfig['value']);
+                                }
+
+                                parent::delete($coreConfig['id']);
+                            } else {
+                                parent::update([
+                                    'code' => $fieldName,
+                                    'value' => $value,
+                                    'locale_code' => $localeBased ? $locale : null,
+                                    'channel_code' => $channelBased ? $channel : null,
+                                ], $coreConfig->id);
+                            }
                         }
                     }
                 }
             }
-        }
+        });
+
+        Event::dispatch('core.configuration.save.after');
     }
 
     /**
-     * @param array  $formData
-     * @param string $method
-     * @return array
+     * Search configuration.
      */
-    public function recuressiveArray(array $formData, $method) {
-        static $data =[];
-        static $recuressiveArrayData =[];
+    public function search(Collection $items, string $searchTerm, array $path = []): array
+    {
+        $results = [];
 
-        foreach ($formData as $form => $formValue) {
-            $value = $method . '.' . $form;
-            if (is_array($formValue)) {
-                $dim = $this->countDim($formValue);
-                if ($dim > 1) {
-                    $this->recuressiveArray($formValue, $value);
-                } else if ($dim == 1) {
-                    $data[$value] = $formValue;
-                }
+        foreach ($items as $configuration) {
+            $title = $this->getTranslatedTitle($configuration);
+
+            if (
+                stripos($title, $searchTerm) !== false
+                && count($path)
+            ) {
+                $queryParam = $path[1]['key'] ?? $configuration->getKey();
+
+                $results[] = [
+                    'title' => implode(' > ', [...Arr::pluck($path, 'title'), $title]),
+                    'url' => route('admin.configuration.index', Str::replace('.', '/', $queryParam)),
+                ];
             }
+
+            $this->getChildrenAndFields($configuration, $searchTerm, $path, $results);
         }
 
-        foreach ($data as $key => $value) {
-            $field = core()->getConfigField($key);
-
-            if ($field) {
-                $recuressiveArrayData[$key] = $value;
-            } else {
-                foreach ($value as $key1 => $val) {
-                    $recuressiveArrayData[$key . '.' . $key1] = $val;
-                }
-            }
-        }
-
-        return $recuressiveArrayData;
+        return $results;
     }
 
     /**
-     * return dimension of array
-     * @param array  $array
-     * @return integer
-    */
-    public function countDim($array)
+     * Flatten the nested array a configuration form submits into the value each setting is saved
+     * under, keyed by its dotted configuration code.
+     */
+    public function flattenToConfigValues(array $formData, string $prefix, array &$sections = [], array &$values = []): array
     {
-        if (is_array(reset($array))) {
-            $return = $this->countDim(reset($array)) + 1;
-        }
-        else {
-            $return = 1;
+        foreach ($formData as $key => $value) {
+            if (! is_array($value)) {
+                continue;
+            }
+
+            $code = $prefix.'.'.$key;
+
+            $depth = $this->depthOf($value);
+
+            if ($depth > 1) {
+                $this->flattenToConfigValues($value, $code, $sections, $values);
+            } elseif ($depth === 1) {
+                $sections[$code] = $value;
+            }
         }
 
-        return $return;
+        foreach ($sections as $code => $fields) {
+            if (core()->getConfigField($code)) {
+                $values[$code] = $fields;
+
+                continue;
+            }
+
+            foreach ($fields as $name => $value) {
+                $values[$code.'.'.$name] = $value;
+            }
+        }
+
+        return $values;
+    }
+
+    /**
+     * How many levels of array the given array nests, counting itself as the first.
+     */
+    public function depthOf(array $array): int
+    {
+        return is_array(reset($array))
+            ? $this->depthOf(reset($array)) + 1
+            : 1;
+    }
+
+    /**
+     * Get the configuration title.
+     */
+    protected function getTranslatedTitle(mixed $configuration): string
+    {
+        if (
+            method_exists($configuration, 'getTitle')
+            && ! is_null($configuration->getTitle())
+        ) {
+            return trans($configuration->getTitle());
+        }
+
+        if (
+            method_exists($configuration, 'getName')
+            && ! is_null($configuration->getName())
+        ) {
+            return trans($configuration->getName());
+        }
+
+        return '';
+    }
+
+    /**
+     * Get children and fields.
+     */
+    protected function getChildrenAndFields(mixed $configuration, string $searchTerm, array $path, array &$results): void
+    {
+        if (
+            method_exists($configuration, 'getChildren')
+            || method_exists($configuration, 'getFields')
+        ) {
+            $children = $configuration->haveChildren()
+                ? $configuration->getChildren()
+                : $configuration->getFields();
+
+            $tempPath = array_merge($path, [[
+                'key' => $configuration->getKey() ?? null,
+                'title' => $this->getTranslatedTitle($configuration),
+            ]]);
+
+            $results = array_merge($results, $this->search($children, $searchTerm, $tempPath));
+        }
     }
 }

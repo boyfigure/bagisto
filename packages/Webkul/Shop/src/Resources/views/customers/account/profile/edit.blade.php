@@ -1,103 +1,285 @@
-@extends('shop::layouts.master')
+<x-shop::layouts.account>
+    <!-- Page Title -->
+    <x-slot:title>
+        @lang('shop::app.customers.account.profile.edit.edit-profile')
+    </x-slot>
 
-@section('page_title')
-    {{ __('shop::app.customer.account.profile.edit-profile.page-title') }}
-@endsection
+    <!-- Breadcrumbs -->
+    @if ((core()->getConfigData('general.general.breadcrumbs.shop')))
+        @section('breadcrumbs')
+            <x-shop::breadcrumbs name="profile.edit" />
+        @endSection
+    @endif
 
-@section('content-wrapper')
-    <div class="account-content">
+    <div class="max-md:hidden">
+        <x-shop::layouts.account.navigation />
+    </div>
 
-        @include('shop::customers.account.partials.sidemenu')
+    <div class="mx-4 flex-auto max-md:mx-6 max-sm:mx-4">
+        <div class="mb-8 flex items-center max-md:mb-5">
+            <!-- Back Button -->
+            <a
+                class="grid md:hidden"
+                href="{{ route('shop.customers.account.profile.index') }}"
+            >
+                <span class="icon-arrow-left rtl:icon-arrow-right text-2xl"></span>
+            </a>
 
-        <div class="account-layout">
+            <h2 class="text-2xl font-medium max-md:text-xl max-sm:text-base ltr:ml-2.5 md:ltr:ml-0 rtl:mr-2.5 md:rtl:mr-0">
+                @lang('shop::app.customers.account.profile.edit.edit-profile')
+            </h2>
+        </div>
+    
+        {!! view_render_event('bagisto.shop.customers.account.profile.edit.before', ['customer' => $customer]) !!}
 
-            <div class="account-head mb-10">
-                <span class="back-icon"><a href="{{ route('customer.account.index') }}"><i class="icon icon-menu-back"></i></a></span>
+        <!-- Profile Edit Form -->
+        <x-shop::form
+            :action="route('shop.customers.account.profile.update')"
+            enctype="multipart/form-data"
+        >
+            {!! view_render_event('bagisto.shop.customers.account.profile.edit_form_controls.before', ['customer' => $customer]) !!}
+    
+            <!-- Image -->
+            <x-shop::form.control-group class="mt-4">
+                <x-shop::form.control-group.control
+                    type="image"
+                    class="max-md:[&>*]:[&>*]:rounded-full mb-0 rounded-xl p-0! text-gray-700 max-md:grid max-md:justify-center"
+                    name="image[]"
+                    :label="trans('Image')"
+                    :is-multiple="false"
+                    accepted-types="image/*"
+                    :src="$customer->image_url"
+                />
 
-                <span class="account-heading">{{ __('shop::app.customer.account.profile.edit-profile.title') }}</span>
+                <x-shop::form.control-group.error control-name="image[]" />
+            </x-shop::form.control-group>
 
-                <span></span>
+            {!! view_render_event('bagisto.shop.customers.account.profile.edit_form_controls.image.after') !!}
+
+            <!-- First Name -->
+            <x-shop::form.control-group>
+                <x-shop::form.control-group.label class="required">
+                    @lang('shop::app.customers.account.profile.edit.first-name')
+                </x-shop::form.control-group.label>
+
+                <x-shop::form.control-group.control
+                    type="text"
+                    name="first_name"
+                    rules="required"
+                    :value="old('first_name') ?? $customer->first_name"
+                    :label="trans('shop::app.customers.account.profile.edit.first-name')"
+                    :placeholder="trans('shop::app.customers.account.profile.edit.first-name')"
+                />
+
+                <x-shop::form.control-group.error control-name="first_name" />
+            </x-shop::form.control-group>
+
+            {!! view_render_event('bagisto.shop.customers.account.profile.edit_form_controls.first_name.after') !!}
+
+            <!-- Last Name -->
+            <x-shop::form.control-group>
+                <x-shop::form.control-group.label class="required">
+                    @lang('shop::app.customers.account.profile.edit.last-name')
+                </x-shop::form.control-group.label>
+
+                <x-shop::form.control-group.control
+                    type="text"
+                    name="last_name"
+                    rules="required"
+                    :value="old('last_name') ?? $customer->last_name"
+                    :label="trans('shop::app.customers.account.profile.edit.last-name')"
+                    :placeholder="trans('shop::app.customers.account.profile.edit.last-name')"
+                />
+
+                <x-shop::form.control-group.error control-name="last_name" />
+            </x-shop::form.control-group>
+
+            {!! view_render_event('bagisto.shop.customers.account.profile.edit_form_controls.last_name.after') !!}
+
+            <!-- Email -->
+            <x-shop::form.control-group>
+                <x-shop::form.control-group.label class="required">
+                    @lang('shop::app.customers.account.profile.edit.email')
+                </x-shop::form.control-group.label>
+
+                <x-shop::form.control-group.control
+                    type="email"
+                    name="email"
+                    rules="required|email"
+                    :value="old('email') ?? $customer->email"
+                    :label="trans('shop::app.customers.account.profile.edit.email')"
+                    :placeholder="trans('shop::app.customers.account.profile.edit.email')"
+                />
+
+                <x-shop::form.control-group.error control-name="email" />
+            </x-shop::form.control-group>
+
+            {!! view_render_event('bagisto.shop.customers.account.profile.edit_form_controls.email.after') !!}
+
+            <!-- Phone -->
+            <x-shop::form.control-group>
+                <x-shop::form.control-group.label class="required">
+                    @lang('shop::app.customers.account.profile.edit.phone')
+                </x-shop::form.control-group.label>
+
+                <x-shop::form.control-group.control
+                    type="text"
+                    name="phone"
+                    rules="required|phone"
+                    :value="old('phone') ?? $customer->phone"
+                    :label="trans('shop::app.customers.account.profile.edit.phone')"
+                    :placeholder="trans('shop::app.customers.account.profile.edit.phone')"
+                />
+
+                <x-shop::form.control-group.error control-name="phone" />
+            </x-shop::form.control-group>
+
+            {!! view_render_event('bagisto.shop.customers.account.profile.edit_form_controls.phone.after') !!}
+
+            <!-- Gender -->
+            <x-shop::form.control-group>
+                <x-shop::form.control-group.label class="required">
+                    @lang('shop::app.customers.account.profile.edit.gender')
+                </x-shop::form.control-group.label>
+
+                <x-shop::form.control-group.control
+                    type="select"
+                    class="mb-3"
+                    name="gender"
+                    rules="required"
+                    :value="old('gender') ?? $customer->gender"
+                    :aria-label="trans('shop::app.customers.account.profile.edit.select-gender')"
+                    :label="trans('shop::app.customers.account.profile.edit.gender')"
+                >
+                    <option value="Other">
+                        @lang('shop::app.customers.account.profile.edit.other')
+                    </option>
+
+                    <option value="Male">
+                        @lang('shop::app.customers.account.profile.edit.male')
+                    </option>
+
+                    <option value="Female">
+                        @lang('shop::app.customers.account.profile.edit.female')
+                    </option>
+                </x-shop::form.control-group.control>
+
+                <x-shop::form.control-group.error control-name="gender" />
+            </x-shop::form.control-group>
+
+            {!! view_render_event('bagisto.shop.customers.account.profile.edit_form_controls.gender.after') !!}
+
+            <!-- DOB -->
+            <x-shop::form.control-group>
+                <x-shop::form.control-group.label>
+                    @lang('shop::app.customers.account.profile.edit.dob')
+                </x-shop::form.control-group.label>
+
+                <x-shop::form.control-group.control
+                    type="date"
+                    name="date_of_birth"
+                    :value="old('date_of_birth') ?? $customer->date_of_birth?->format('Y-m-d')"
+                    :label="trans('shop::app.customers.account.profile.edit.dob')"
+                    :placeholder="trans('shop::app.customers.account.profile.edit.dob')"
+                />
+
+                <x-shop::form.control-group.error control-name="date_of_birth" />
+            </x-shop::form.control-group>
+
+            {!! view_render_event('bagisto.shop.customers.account.profile.edit_form_controls.date_of_birth.after') !!}
+
+            <!-- Current Password -->
+            <x-shop::form.control-group>
+                <x-shop::form.control-group.label>
+                    @lang('shop::app.customers.account.profile.edit.current-password')
+                </x-shop::form.control-group.label>
+
+                <x-shop::form.control-group.control
+                    type="password"
+                    name="current_password"
+                    value=""
+                    :label="trans('shop::app.customers.account.profile.edit.current-password')"
+                    :placeholder="trans('shop::app.customers.account.profile.edit.current-password')"
+                />
+
+                <x-shop::form.control-group.error control-name="current_password" />
+            </x-shop::form.control-group>
+
+            {!! view_render_event('bagisto.shop.customers.account.profile.edit_form_controls.old_password.after') !!}
+
+            <!-- New Password -->
+            <x-shop::form.control-group>
+                <x-shop::form.control-group.label>
+                    @lang('shop::app.customers.account.profile.edit.new-password')
+                </x-shop::form.control-group.label>
+
+                <x-shop::form.control-group.control
+                    type="password"
+                    name="new_password"
+                    value=""
+                    :label="trans('shop::app.customers.account.profile.edit.new-password')"
+                    :placeholder="trans('shop::app.customers.account.profile.edit.new-password')"
+                />
+
+                <x-shop::form.control-group.error control-name="new_password" />
+            </x-shop::form.control-group>
+
+            {!! view_render_event('bagisto.shop.customers.account.profile.edit_form_controls.new_password.after') !!}
+
+            <!-- New Password Confirmation -->
+            <x-shop::form.control-group>
+                <x-shop::form.control-group.label>
+                    @lang('shop::app.customers.account.profile.edit.confirm-password')
+                </x-shop::form.control-group.label>
+
+                <x-shop::form.control-group.control
+                    type="password"
+                    name="new_password_confirmation"
+                    rules="confirmed:@new_password"
+                    value=""
+                    :label="trans('shop::app.customers.account.profile.edit.confirm-password')"
+                    :placeholder="trans('shop::app.customers.account.profile.edit.confirm-password')"
+                />
+
+                <x-shop::form.control-group.error control-name="new_password_confirmation" />
+            </x-shop::form.control-group>
+
+            {!! view_render_event('bagisto.shop.customers.account.profile.edit_form_controls.new_password_confirmation.after') !!}
+
+            <div class="mb-4 flex select-none items-center gap-1.5">
+                <input
+                    type="checkbox"
+                    name="subscribed_to_news_letter"
+                    id="is-subscribed"
+                    class="peer sr-only"
+                    @checked($customer->subscribed_to_news_letter)
+                />
+
+                <label
+                    class="icon-uncheck peer-checked:icon-check-box cursor-pointer text-2xl text-navyBlue peer-checked:text-navyBlue peer-focus-visible:ring-2 peer-focus-visible:ring-navyBlue peer-focus-visible:ring-offset-2 peer-focus-visible:outline-hidden rounded"
+                    for="is-subscribed"
+                ></label>
+
+                <label
+                    class="cursor-pointer select-none text-base text-zinc-500 max-md:text-sm ltr:pl-0 rtl:pr-0"
+                    for="is-subscribed"
+                >
+                    @lang('shop::app.customers.account.profile.edit.subscribe-to-newsletter')
+                </label>
             </div>
 
-            {!! view_render_event('bagisto.shop.customers.account.profile.edit.before', ['customer' => $customer]) !!}
+            <button
+                type="submit"
+                class="primary-button m-0 block rounded-2xl px-11 py-3 text-center text-base max-md:w-full max-md:max-w-full max-md:rounded-lg max-md:py-1.5"
+            >
+                @lang('shop::app.customers.account.profile.edit.save')
+            </button>
 
-            <form method="post" action="{{ route('customer.profile.edit') }}" @submit.prevent="onSubmit">
+            {!! view_render_event('bagisto.shop.customers.account.profile.edit_form_controls.after', ['customer' => $customer]) !!}
 
-                <div class="edit-form">
-                    @csrf
+        </x-shop::form>
 
-                    {!! view_render_event('bagisto.shop.customers.account.profile.edit_form_controls.before', ['customer' => $customer]) !!}
-
-                    <div class="control-group" :class="[errors.has('first_name') ? 'has-error' : '']">
-                        <label for="first_name" class="required">{{ __('shop::app.customer.account.profile.fname') }}</label>
-
-                        <input type="text" class="control" name="first_name" value="{{ old('first_name') ?? $customer->first_name }}" v-validate="'required'" data-vv-as="&quot;{{ __('shop::app.customer.account.profile.fname') }}&quot;">
-                        <span class="control-error" v-if="errors.has('first_name')">@{{ errors.first('first_name') }}</span>
-                    </div>
-
-                    <div class="control-group" :class="[errors.has('last_name') ? 'has-error' : '']">
-                        <label for="last_name" class="required">{{ __('shop::app.customer.account.profile.lname') }}</label>
-
-                        <input type="text" class="control" name="last_name" value="{{ old('last_name') ?? $customer->last_name }}" v-validate="'required'" data-vv-as="&quot;{{ __('shop::app.customer.account.profile.lname') }}&quot;">
-                        <span class="control-error" v-if="errors.has('last_name')">@{{ errors.first('last_name') }}</span>
-                    </div>
-
-                    <div class="control-group" :class="[errors.has('gender') ? 'has-error' : '']">
-                        <label for="email" class="required">{{ __('shop::app.customer.account.profile.gender') }}</label>
-
-                        <select name="gender" class="control" v-validate="'required'" data-vv-as="&quot;{{ __('shop::app.customer.account.profile.gender') }}&quot;">
-                            <option value=""  @if ($customer->gender == "") selected @endif></option>
-                            <option value="Other"  @if ($customer->gender == "Other") selected @endif>Other</option>
-                            <option value="Male"  @if ($customer->gender == "Male") selected @endif>Male</option>
-                            <option value="Female" @if ($customer->gender == "Female") selected @endif>Female</option>
-                        </select>
-                        <span class="control-error" v-if="errors.has('gender')">@{{ errors.first('gender') }}</span>
-                    </div>
-
-                    <div class="control-group"  :class="[errors.has('date_of_birth') ? 'has-error' : '']">
-                        <label for="date_of_birth">{{ __('shop::app.customer.account.profile.dob') }}</label>
-                        <input type="date" class="control" name="date_of_birth" value="{{ old('date_of_birth') ?? $customer->date_of_birth }}" v-validate="" data-vv-as="&quot;{{ __('shop::app.customer.account.profile.dob') }}&quot;">
-                        <span class="control-error" v-if="errors.has('date_of_birth')">@{{ errors.first('date_of_birth') }}</span>
-                    </div>
-
-                    <div class="control-group" :class="[errors.has('email') ? 'has-error' : '']">
-                        <label for="email" class="required">{{ __('shop::app.customer.account.profile.email') }}</label>
-                        <input type="email" class="control" name="email" value="{{ old('email') ?? $customer->email }}" v-validate="'required'" data-vv-as="&quot;{{ __('shop::app.customer.account.profile.email') }}&quot;">
-                        <span class="control-error" v-if="errors.has('email')">@{{ errors.first('email') }}</span>
-                    </div>
-
-                    <div class="control-group" :class="[errors.has('oldpassword') ? 'has-error' : '']">
-                        <label for="password">{{ __('shop::app.customer.account.profile.opassword') }}</label>
-                        <input type="password" class="control" name="oldpassword" data-vv-as="&quot;{{ __('shop::app.customer.account.profile.opassword') }}&quot;" v-validate="'min:6'">
-                        <span class="control-error" v-if="errors.has('oldpassword')">@{{ errors.first('oldpassword') }}</span>
-                    </div>
-
-                    <div class="control-group" :class="[errors.has('password') ? 'has-error' : '']">
-                        <label for="password">{{ __('shop::app.customer.account.profile.password') }}</label>
-
-                        <input type="password" id="password" class="control" name="password" data-vv-as="&quot;{{ __('shop::app.customer.account.profile.password') }}&quot;" v-validate="'min:6'">
-                        <span class="control-error" v-if="errors.has('password')">@{{ errors.first('password') }}</span>
-                    </div>
-
-                    <div class="control-group" :class="[errors.has('password_confirmation') ? 'has-error' : '']">
-                        <label for="password">{{ __('shop::app.customer.account.profile.cpassword') }}</label>
-
-                        <input type="password" id="password_confirmation" class="control" name="password_confirmation" data-vv-as="&quot;{{ __('shop::app.customer.account.profile.cpassword') }}&quot;" v-validate="'min:6|confirmed:password'">
-                        <span class="control-error" v-if="errors.has('password_confirmation')">@{{ errors.first('password_confirmation') }}</span>
-                    </div>
-
-                    {!! view_render_event('bagisto.shop.customers.account.profile.edit_form_controls.after', ['customer' => $customer]) !!}
-
-                    <div class="button-group">
-                        <input class="btn btn-primary btn-lg" type="submit" value="{{ __('shop::app.customer.account.profile.submit') }}">
-                    </div>
-                </div>
-
-            </form>
-
-            {!! view_render_event('bagisto.shop.customers.account.profile.edit.after', ['customer' => $customer]) !!}
-
-        </div>
+        {!! view_render_event('bagisto.shop.customers.account.profile.edit.after', ['customer' => $customer]) !!}
 
     </div>
-@endsection
+</x-shop::layouts.account>

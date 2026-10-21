@@ -2,83 +2,245 @@
 
 namespace Webkul\Product\Repositories;
 
-use Illuminate\Container\Container as App;
-use Webkul\Attribute\Repositories\AttributeRepository;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
+use Webkul\Attribute\Models\AttributeProxy;
 use Webkul\Core\Eloquent\Repository;
-use Webkul\Product\Models\ProductAttributeValue;
+use Webkul\Core\Traits\Sanitizer;
+use Webkul\Product\Contracts\Product;
+use Webkul\Product\Contracts\ProductAttributeValue;
 
-/**
- * Product Attribute Value Reposotory
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class ProductAttributeValueRepository extends Repository
 {
-    /**
-     * AttributeRepository object
-     *
-     * @var array
-     */
-    protected $attributeRepository;
+    use Sanitizer;
 
     /**
-     * Create a new controller instance.
-     *
-     * @param  Webkul\Attribute\Repositories\AttributeRepository $attributeRepository
-     * @return void
+     * Specify the model class name.
      */
-    public function __construct(
-        AttributeRepository $attributeRepository,
-        App $app
-    )
+    public function model(): string
     {
-        $this->attributeRepository = $attributeRepository;
-
-        parent::__construct($app);
+        return ProductAttributeValue::class;
     }
 
     /**
-     * Specify Model class name
-     *
-     * @return mixed
+     * Upsert attribute values, cleaning the ones their attribute stores as rich text.
      */
-    function model()
+    public function upsert(array $values, $uniqueBy, $update = null)
     {
-        return 'Webkul\Product\Contracts\ProductAttributeValue';
+        return $this->model->upsert($this->cleanRichTextValues($values), $uniqueBy, $update);
     }
 
     /**
-     * @param array $data
-     * @return mixed
+     * Run the values of rich text attributes through the purifier, leaving the others alone.
+     *
+     * @param  array<int|string, array<string, mixed>>  $values
+     * @return array<int|string, array<string, mixed>>
      */
-    public function create(array $data)
+    public function cleanRichTextValues(array $values): array
     {
-        if (isset($data['attribute_id'])) {
-            $attribute = $this->attributeRepository->find($data['attribute_id']);
-        } else {
-            $attribute = $this->attributeRepository->findOneByField('code', $data['attribute_code']);
+        $richTextAttributeIds = AttributeProxy::modelClass()::query()
+            ->where('type', 'textarea')
+            ->where('enable_wysiwyg', 1)
+            ->pluck('id')
+            ->all();
+
+        if (! $richTextAttributeIds) {
+            return $values;
         }
 
-        if (! $attribute)
-            return;
+        foreach ($values as $key => $value) {
+            if (
+                ! in_array($value['attribute_id'] ?? null, $richTextAttributeIds)
+                || ! is_string($value['text_value'] ?? null)
+            ) {
+                continue;
+            }
 
-        $data[ProductAttributeValue::$attributeTypeFields[$attribute->type]] = $data['value'];
+            $values[$key]['text_value'] = clean_content($value['text_value']);
+        }
 
-        return $this->model->create($data);
+        return $values;
     }
 
     /**
-     * @param string $column
-     * @param int    $attributeId
-     * @param int    $productId
-     * @param string $value
-     * @return boolean
+     * Save attribute values.
+     *
+     * @param  array  $data
+     * @param  Product  $product
+     * @param  mixed  $attributes
+     * @return void
+     */
+    public function saveValues($data, $product, $attributes)
+    {
+        $attributeValuesToInsert = [];
+
+        foreach ($attributes as $attribute) {
+            if ($attribute->type === 'boolean') {
+                $data[$attribute->code] = ! empty($data[$attribute->code]);
+            }
+
+            if (in_array($attribute->type, ['multiselect', 'checkbox'])) {
+                $data[$attribute->code] = implode(',', $data[$attribute->code] ?? []);
+            }
+
+            if (! isset($data[$attribute->code])) {
+                continue;
+            }
+
+            if (
+                $attribute->type === 'price'
+                && empty($data[$attribute->code])
+            ) {
+                $data[$attribute->code] = null;
+            }
+
+            if (
+                $attribute->type === 'date'
+                && empty($data[$attribute->code])
+            ) {
+                $data[$attribute->code] = null;
+            }
+
+            /**
+             * A cleared select stores its (integer) value, so an empty string must
+             * be normalized to null - otherwise "" is written to the integer column.
+             */
+            if (
+                $attribute->type === 'select'
+                && empty($data[$attribute->code])
+            ) {
+                $data[$attribute->code] = null;
+            }
+
+            if (in_array($attribute->type, ['image', 'file'])) {
+                if ($data[$attribute->code] instanceof UploadedFile) {
+                    $file = $data[$attribute->code];
+
+                    $data[$attribute->code] = $file->store('products/'.$product->id);
+
+                    if (! $this->sanitizeSVG($data[$attribute->code], $file->getMimeType())) {
+                        throw ValidationException::withMessages([
+                            $attribute->code => trans('core::app.errors.invalid-svg'),
+                        ]);
+                    }
+                } elseif (empty($data[$attribute->code]['delete'])) {
+                    continue;
+                }
+            }
+
+            $attributeValues = $product->attribute_values
+                ->where('attribute_id', $attribute->id);
+
+            $channel = $attribute->value_per_channel ? ($data['channel'] ?? core()->getDefaultChannelCode()) : null;
+
+            $locale = $attribute->value_per_locale ? ($data['locale'] ?? core()->getDefaultLocaleCodeFromDefaultChannel()) : null;
+
+            if ($attribute->value_per_channel) {
+                if ($attribute->value_per_locale) {
+                    $filteredAttributeValues = $attributeValues
+                        ->where('channel', $channel)
+                        ->where('locale', $locale);
+                } else {
+                    $filteredAttributeValues = $attributeValues
+                        ->where('channel', $channel);
+                }
+            } else {
+                if ($attribute->value_per_locale) {
+                    $filteredAttributeValues = $attributeValues
+                        ->where('locale', $locale);
+                } else {
+                    $filteredAttributeValues = $attributeValues;
+                }
+            }
+
+            $attributeValue = $filteredAttributeValues->first();
+
+            $uniqueId = implode('|', array_filter([
+                $channel,
+                $locale,
+                $product->id,
+                $attribute->id,
+            ]));
+
+            if (! $attributeValue) {
+                $attributeValuesToInsert[] = array_merge($this->getAttributeTypeColumnValues($attribute, $data[$attribute->code]), [
+                    'product_id' => $product->id,
+                    'attribute_id' => $attribute->id,
+                    'channel' => $channel,
+                    'locale' => $locale,
+                    'unique_id' => $uniqueId,
+                ]);
+            } else {
+                $previousTextValue = $attributeValue->text_value;
+
+                if (in_array($attribute->type, ['image', 'file'])) {
+                    /**
+                     * If $data[$attribute->code]['delete'] is not empty, that means someone selected the "delete" option.
+                     */
+                    if (! empty($data[$attribute->code]['delete'])) {
+                        Storage::delete($previousTextValue);
+
+                        $data[$attribute->code] = null;
+                    }
+                    /**
+                     * If $data[$attribute->code] is not equal to the previous one, that means someone has
+                     * updated the file or image. In that case, we will remove the previous file.
+                     */
+                    elseif (
+                        ! empty($previousTextValue)
+                        && $data[$attribute->code] != $previousTextValue
+                    ) {
+                        Storage::delete($previousTextValue);
+                    }
+                }
+
+                $attributeValue = $this->update([
+                    $attribute->column_name => $data[$attribute->code],
+                    'unique_id' => $uniqueId,
+                ], $attributeValue->id);
+            }
+        }
+
+        if (! empty($attributeValuesToInsert)) {
+            $this->insert($attributeValuesToInsert);
+        }
+    }
+
+    /**
+     * Every value column of an attribute, with the value set on the one its type uses.
+     *
+     * @param  mixed  $attribute
+     * @param  mixed  $value
+     * @return array
+     */
+    public function getAttributeTypeColumnValues($attribute, $value)
+    {
+        $attributeTypeFields = array_fill_keys(array_values($attribute->attributeTypeFields), null);
+
+        $attributeTypeFields[$attribute->column_name] = $value;
+
+        return $attributeTypeFields;
+    }
+
+    /**
+     * Whether no other product already carries this value for the attribute.
+     *
+     * @param  string  $column
+     * @param  int  $attributeId
+     * @param  int  $productId
+     * @param  string  $value
+     * @return bool
      */
     public function isValueUnique($productId, $attributeId, $column, $value)
     {
-        $result = $this->resetScope()->model->where($column, $value)->where('attribute_id', '=', $attributeId)->where('product_id', '!=', $productId)->get();
+        $count = $this->resetScope()
+            ->model
+            ->where($column, $value)
+            ->where('attribute_id', '=', $attributeId)
+            ->where('product_id', '!=', $productId)
+            ->count('id');
 
-        return $result->count() ? false : true;
+        return ! $count;
     }
 }

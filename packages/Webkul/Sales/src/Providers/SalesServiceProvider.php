@@ -2,24 +2,35 @@
 
 namespace Webkul\Sales\Providers;
 
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\ServiceProvider;
+use Webkul\Sales\Console\Commands\InvoiceOverdueCron;
 
 class SalesServiceProvider extends ServiceProvider
 {
-    public function boot()
+    /**
+     * Bootstrap services.
+     */
+    public function boot(): void
     {
-        $this->loadMigrationsFrom(__DIR__ . '/../Database/Migrations');
+        $this->loadMigrationsFrom(__DIR__.'/../Database/Migrations');
+
+        $this->registerCommands();
+
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule) {
+            $schedule->command('invoice:cron')->dailyAt('3:00');
+        });
     }
 
     /**
-     * Register services.
-     *
-     * @return void
+     * Register the package's console commands.
      */
-    public function register()
+    protected function registerCommands(): void
     {
-        $this->mergeConfigFrom(
-            dirname(__DIR__) . '/Config/system.php', 'core'
-        );
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                InvoiceOverdueCron::class,
+            ]);
+        }
     }
 }

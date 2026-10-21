@@ -2,58 +2,55 @@
 
 namespace Webkul\Sales\Repositories;
 
-use Illuminate\Container\Container as App;
 use Illuminate\Support\Facades\Event;
 use Webkul\Core\Eloquent\Repository;
 use Webkul\Sales\Contracts\InvoiceItem;
 
-/**
- * Invoice Item Reposotory
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
-
 class InvoiceItemRepository extends Repository
 {
     /**
-     * Specify Model class name
-     *
-     * @return Mixed
+     * Specify the model class name.
      */
-
-    function model()
+    public function model(): string
     {
         return InvoiceItem::class;
     }
 
     /**
-     * @param array $data
+     * Move the invoiced quantity of an item out of its ordered inventory.
+     *
+     * @param  array  $data
      * @return void
      */
     public function updateProductInventory($data)
     {
-        if (! $data['product'])
+        if (! $data['product']) {
             return;
+        }
+
+        if (! $data['product']->manage_stock) {
+            return;
+        }
 
         $orderedInventory = $data['product']->ordered_inventories()
-                ->where('channel_id', $data['invoice']->order->channel->id)
-                ->first();
+            ->where('channel_id', $data['invoice']->order->channel->id)
+            ->first();
 
         if ($orderedInventory) {
-            if (($orderedQty = $orderedInventory->qty - $data['qty']) < 0)
+            if (($orderedQty = $orderedInventory->qty - $data['qty']) < 0) {
                 $orderedQty = 0;
+            }
 
             $orderedInventory->update(['qty' => $orderedQty]);
         }
 
         $inventories = $data['product']->inventories()
-                ->where('vendor_id', $data['vendor_id'])
-                ->whereIn('inventory_source_id', $data['invoice']->order->channel->inventory_sources()->pluck('id'))
-                ->orderBy('qty', 'desc')
-                ->get();
-            
-        foreach ($inventories as $key => $inventory) {
+            ->where('vendor_id', $data['vendor_id'])
+            ->whereIn('inventory_source_id', $data['invoice']->order->channel->inventory_sources()->pluck('id'))
+            ->orderBy('qty', 'desc')
+            ->get();
+
+        foreach ($inventories as $inventory) {
             if ($inventory->qty >= $data['qty']) {
                 $inventory->update(['qty' => $inventory->qty - $data['qty']]);
 
@@ -65,6 +62,6 @@ class InvoiceItemRepository extends Repository
             }
         }
 
-        Event::fire('catalog.product.update.after', $data['product']);
+        Event::dispatch('catalog.product.update.after', $data['product']);
     }
 }

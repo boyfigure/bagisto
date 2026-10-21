@@ -1,110 +1,167 @@
-window.jQuery = window.$ = $ = require("jquery");
-window.Vue = require("vue");
-window.VeeValidate = require("vee-validate");
-window.axios = require("axios");
-require("./bootstrap");
-require("ez-plus/src/jquery.ez-plus.js");
-var accounting = require('accounting');
-locales = require("./lang/locales.js");
+/**
+ * This will track all the images and fonts for publishing.
+ */
+import.meta.glob(["../images/**", "../fonts/**"]);
 
-Vue.use(VeeValidate, {
-    dictionary: {
-        ar: { messages: locales.messages.ar }
-    }
-});
+/**
+ * Main vue bundler.
+ */
+import { createApp } from "vue/dist/vue.esm-bundler";
 
-Vue.prototype.$http = axios
+/**
+ * Main root application registry.
+ */
+window.app = createApp({
+    data() {
+        return {};
+    },
 
-window.eventBus = new Vue();
+    mounted() {
+        this.lazyImages();
+    },
 
-Vue.component("image-slider", require("./components/image-slider.vue"));
-Vue.component("vue-slider", require("vue-slider-component"));
-Vue.filter('currency', function (value, argument) {
-    return accounting.formatMoney(value, argument);
-})
+    methods: {
+        onSubmit() {},
 
-$(document).ready(function () {
-    const app = new Vue({
-        el: "#app",
+        onInvalidSubmit({ values, errors, results }) {
+            setTimeout(() => {
+                const errorKeys = Object.entries(errors)
+                    .map(([key, value]) => ({ key, value }))
+                    .filter(error => error["value"].length);
 
-        data: {
-            modalIds: {}
-        },
+                if (errorKeys.length > 0) {
+                    const errorKey = errorKeys[0]["key"];
 
-        mounted: function () {
-            this.addServerErrors();
-            this.addFlashMessages();
-
-            this.$validator.localize(document.documentElement.lang);
-        },
-
-        methods: {
-            onSubmit: function (e) {
-                this.toggleButtonDisable(true);
-
-                if(typeof tinyMCE !== 'undefined')
-                    tinyMCE.triggerSave();
-
-                this.$validator.validateAll().then(result => {
-                    if (result) {
-                        e.target.submit();
-                    } else {
-                        this.toggleButtonDisable(false);
-
-                        eventBus.$emit('onFormError')
+                    let scrollTarget = null;
+                    
+                    // Try to find the input element with the exact name first.
+                    let firstErrorElement = document.querySelector('[name="' + errorKey + '"]');
+                    
+                    // If not found and the key doesn't end with [], try with the [] suffix (for array fields).
+                    if (
+                        ! firstErrorElement 
+                        && ! errorKey.endsWith('[]')
+                    ) {
+                        firstErrorElement = document.querySelector('[name="' + errorKey + '[]"]');
                     }
-                });
-            },
+                    
+                    // If still not found, try to find any element that starts with this name (for nested fields).
+                    if (! firstErrorElement) {
+                        firstErrorElement = document.querySelector('[name^="' + errorKey + '"]');
+                    }
 
-            toggleButtonDisable (value) {
-                var buttons = document.getElementsByTagName("button");
+                    // If we found the input element.
+                    if (firstErrorElement) {
+                        scrollTarget = firstErrorElement;
+                        
+                        // Check if this is a TinyMCE textarea (hidden by TinyMCE).
+                        if (firstErrorElement.tagName === 'TEXTAREA' && firstErrorElement.style.display === 'none') {
+                            // Find the TinyMCE editor container.
+                            const editorId = firstErrorElement.id;
 
-                for (var i = 0; i < buttons.length; i++) {
-                    buttons[i].disabled = value;
-                }
-            },
-
-            addServerErrors: function (scope = null) {
-                for (var key in serverErrors) {
-                    var inputNames = [];
-                    key.split('.').forEach(function(chunk, index) {
-                        if(index) {
-                            inputNames.push('[' + chunk + ']')
-                        } else {
-                            inputNames.push(chunk)
+                            const tinyMCEContainer = document.querySelector('#' + editorId + '_parent');
+                            
+                            if (tinyMCEContainer) {
+                                scrollTarget = tinyMCEContainer;
+                            }
                         }
-                    })
+                    } else {
+                        // If the input is not found, try to find the error message element itself.
+                        // VeeValidate renders error messages with a v-error-message component having a name attribute.
+                        const errorMessageElement = document.querySelector('[name="' + errorKey + '"] p, [name="' + errorKey + '[]"] p');
+                        
+                        if (errorMessageElement) {
+                            // Scroll to the parent container of the error message.
+                            scrollTarget = errorMessageElement.closest('.border') || errorMessageElement.closest('div[class*="bg-white"]') || errorMessageElement;
+                        }
+                    }
 
-                    var inputName = inputNames.join('');
+                    if (scrollTarget) {
+                        scrollTarget.scrollIntoView({
+                            behavior: "smooth",
+                            block: "center"
+                        });
+                        
+                        // Try to focus the element: for TinyMCE, focus the editor; for regular inputs, focus the input.
+                        if (firstErrorElement) {
+                            if (firstErrorElement.tagName === 'TEXTAREA' && firstErrorElement.style.display === 'none') {
+                                // Focus the TinyMCE editor if available.
+                                const editorId = firstErrorElement.id;
 
-                    const field = this.$validator.fields.find({
-                        name: inputName,
-                        scope: scope
-                    });
-                    if (field) {
-                        this.$validator.errors.add({
-                            id: field.id,
-                            field: inputName,
-                            msg: serverErrors[key][0],
-                            scope: scope
+                                if (window.tinymce && tinymce.get(editorId)) {
+                                    tinymce.get(editorId).focus();
+                                }
+                            } else if (firstErrorElement.focus) {
+                                firstErrorElement.focus();
+                            }
+                        }
+                    } else {
+                        // If the scroll target is not found, show a flash message with all errors.
+                        const allErrors = errorKeys
+                            .map(error => {
+                                if (Array.isArray(error.value)) {
+                                    return error.value.join(', ');
+                                }
+
+                                return error.value;
+                            })
+                            .filter(msg => msg).join(' ');
+                        
+                        this.$emitter.emit('add-flash', { 
+                            type: 'error', 
+                            message: allErrors 
                         });
                     }
                 }
-            },
+            }, 100);
+        },
 
-            addFlashMessages: function () {
-                const flashes = this.$refs.flashes;
+        lazyImages() {
+            var lazyImages = [].slice.call(document.querySelectorAll('img.lazy'));
 
-                flashMessages.forEach(function (flash) {
-                    flashes.addFlash(flash);
-                }, this);
-            },
+            let lazyImageObserver = new IntersectionObserver(function(entries, observer) {
+                entries.forEach(function(entry) {
+                    if (entry.isIntersecting) {
+                        let lazyImage = entry.target;
 
-            responsiveHeader: function () { },
+                        lazyImage.src = lazyImage.dataset.src;
 
-            showModal(id) {
-                this.$set(this.modalIds, id, true);
-            }
-        }
-    });
+                        lazyImage.classList.remove('lazy');
+
+                        lazyImageObserver.unobserve(lazyImage);
+                    }
+                });
+            });
+
+            lazyImages.forEach(function(lazyImage) {
+                lazyImageObserver.observe(lazyImage);
+            });
+        },
+    },
 });
+
+/**
+ * Global plugins registration.
+ */
+import Axios from "./plugins/axios";
+import Emitter from "./plugins/emitter";
+import Shop from "./plugins/shop";
+import VeeValidate from "./plugins/vee-validate";
+import Flatpickr from "./plugins/flatpickr";
+
+[
+    Axios,
+    Emitter,
+    Shop,
+    VeeValidate,
+    Flatpickr,
+].forEach((plugin) => app.use(plugin));
+
+/**
+ * Global directives.
+ */
+import Debounce from "./directives/debounce";
+
+app.directive("debounce", Debounce);
+
+export default app;

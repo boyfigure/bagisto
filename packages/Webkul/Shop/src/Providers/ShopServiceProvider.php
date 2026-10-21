@@ -2,88 +2,80 @@
 
 namespace Webkul\Shop\Providers;
 
-use Illuminate\Support\ServiceProvider;
-use Illuminate\Routing\Router;
 use Illuminate\Pagination\Paginator;
+use Illuminate\Routing\Router;
+use Illuminate\Support\Facades\Blade;
+use Illuminate\Support\Facades\Route;
+use Illuminate\Support\ServiceProvider;
+use Webkul\Core\Http\Middleware\PreventRequestsDuringMaintenance;
+use Webkul\Shop\Http\Middleware\AuthenticateCustomer;
+use Webkul\Shop\Http\Middleware\CacheResponse;
+use Webkul\Shop\Http\Middleware\Currency;
 use Webkul\Shop\Http\Middleware\Locale;
 use Webkul\Shop\Http\Middleware\Theme;
-use Webkul\Shop\Http\Middleware\Currency;
-use Webkul\Core\Tree;
 
-/**
- * Shop service provider
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class ShopServiceProvider extends ServiceProvider
 {
     /**
-     * Bootstrap services.
-     *
-     * @return void
-     */
-    public function boot(Router $router)
-    {
-        $this->loadRoutesFrom(__DIR__ . '/../Http/routes.php');
-
-        $this->loadTranslationsFrom(__DIR__ . '/../Resources/lang', 'shop');
-
-        $this->publishes([
-            __DIR__ . '/../../publishable/assets' => public_path('themes/default/assets'),
-        ], 'public');
-
-        $this->loadViewsFrom(__DIR__ . '/../Resources/views', 'shop');
-
-        $router->aliasMiddleware('locale', Locale::class);
-        $router->aliasMiddleware('theme', Theme::class);
-        $router->aliasMiddleware('currency', Currency::class);
-
-        $this->composeView();
-
-        Paginator::defaultView('shop::partials.pagination');
-        Paginator::defaultSimpleView('shop::partials.pagination');
-    }
-
-    /**
      * Register services.
-     *
-     * @return void
      */
-    public function register()
+    public function register(): void
     {
         $this->registerConfig();
     }
 
     /**
-     * Bind the the data to the views
-     *
-     * @return void
+     * Bootstrap services.
      */
-    protected function composeView()
+    public function boot(Router $router): void
     {
-        view()->composer('shop::customers.account.partials.sidemenu', function ($view) {
-            $tree = Tree::create();
+        $router->middlewareGroup('shop', [
+            Theme::class,
+            Locale::class,
+            Currency::class,
+        ]);
 
-            foreach (config('menu.customer') as $item) {
-                $tree->add($item, 'menu');
-            }
+        $router->aliasMiddleware('theme', Theme::class);
+        $router->aliasMiddleware('locale', Locale::class);
+        $router->aliasMiddleware('currency', Currency::class);
+        $router->aliasMiddleware('cache.response', CacheResponse::class);
+        $router->aliasMiddleware('customer', AuthenticateCustomer::class);
 
-            $tree->items = core()->sortItems($tree->items);
+        Route::middleware(['web', 'shop', PreventRequestsDuringMaintenance::class])->group(__DIR__.'/../Routes/web.php');
+        Route::middleware(['web', 'shop', PreventRequestsDuringMaintenance::class])->group(__DIR__.'/../Routes/api.php');
 
-            $view->with('menu', $tree);
-        });
+        $this->registerBreadcrumbs();
+
+        $this->loadMigrationsFrom(__DIR__.'/../Database/Migrations');
+
+        $this->loadTranslationsFrom(__DIR__.'/../Resources/lang', 'shop');
+
+        $this->loadViewsFrom(__DIR__.'/../Resources/views', 'shop');
+
+        Paginator::defaultView('shop::partials.pagination');
+        Paginator::defaultSimpleView('shop::partials.pagination');
+
+        Blade::anonymousComponentPath(__DIR__.'/../Resources/views/components', 'shop');
+
+        $this->app->register(EventServiceProvider::class);
+    }
+
+    /**
+     * Register the storefront breadcrumb trails.
+     */
+    protected function registerBreadcrumbs(): void
+    {
+        require __DIR__.'/../Routes/breadcrumbs.php';
     }
 
     /**
      * Register package config.
-     *
-     * @return void
      */
-    protected function registerConfig()
+    protected function registerConfig(): void
     {
         $this->mergeConfigFrom(
-            dirname(__DIR__) . '/Config/menu.php', 'menu.customer'
+            dirname(__DIR__).'/Config/menu.php',
+            'menu.customer'
         );
     }
 }

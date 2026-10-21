@@ -5,90 +5,98 @@ namespace Webkul\Shipping;
 use Illuminate\Support\Facades\Config;
 use Webkul\Checkout\Facades\Cart;
 
-/**
- * Class Shipping.
- *
- */
 class Shipping
 {
     /**
-     * Rates
+     * Rates.
      *
      * @var array
      */
     protected $rates = [];
 
     /**
-     * Collects rate from available shipping methods
+     * Collects rate from available shipping methods.
      *
-     * @return array
+     * @return array|bool
      */
     public function collectRates()
     {
-        if (! $cart = Cart::getCart())
+        if (! Cart::getCart()) {
             return false;
+        }
 
         $this->removeAllShippingRates();
+
+        $ratesList = [];
 
         foreach (Config::get('carriers') as $shippingMethod) {
             $object = new $shippingMethod['class'];
 
             if ($rates = $object->calculate()) {
                 if (is_array($rates)) {
-                    $this->rates = array_merge($this->rates, $rates);
+                    $ratesList[] = $rates;
                 } else {
-                    $this->rates[] = $rates;
+                    $ratesList[] = [$rates];
                 }
             }
         }
 
+        $this->rates = array_merge(...$ratesList);
+
         $this->saveAllShippingRates();
 
         return [
-                'jump_to_section' => 'shipping',
-                'shippingMethods' => $this->getGroupedAllShippingRates(),
-                'html' => view('shop::checkout.onepage.shipping', ['shippingRateGroups' => $this->getGroupedAllShippingRates()])->render()
-            ];
+            'shippingMethods' => $this->getGroupedAllShippingRates(),
+        ];
     }
 
     /**
-     * Persist shipping rate to database
+     * Remove all shipping rates.
      *
      * @return void
      */
     public function removeAllShippingRates()
     {
-        if (! $cart = Cart::getCart())
+        if (! $cart = Cart::getCart()) {
             return;
-
-        foreach ($cart->shipping_rates()->get() as $rate) {
-            $rate->delete();
         }
+
+        $cart->shipping_rates()->delete();
+
+        $this->rates = [];
     }
 
     /**
-     * Persist shipping rate to database
+     * Save all shipping rates.
      *
      * @return void
      */
     public function saveAllShippingRates()
     {
-        if (! $cart = Cart::getCart())
+        if (! $cart = Cart::getCart()) {
             return;
+        }
 
         $shippingAddress = $cart->shipping_address;
 
+        if (! $shippingAddress) {
+            return;
+        }
+
         foreach ($this->rates as $rate) {
+            $rate->cart_id = $cart->id;
             $rate->cart_address_id = $shippingAddress->id;
+            $rate->price_incl_tax = $rate->price;
+            $rate->base_price_incl_tax = $rate->base_price;
 
             $rate->save();
         }
     }
 
     /**
-     * Returns shipping rates, grouped by shipping method
+     * Returns shipping rates, grouped by shipping method.
      *
-     * @return void
+     * @return array
      */
     public function getGroupedAllShippingRates()
     {
@@ -98,13 +106,70 @@ class Shipping
             if (! isset($rates[$rate->carrier])) {
                 $rates[$rate->carrier] = [
                     'carrier_title' => $rate->carrier_title,
-                    'rates' => []
+                    'rates' => [],
                 ];
             }
+
+            $rate['base_formatted_price'] = core()->currency($rate->base_price);
 
             $rates[$rate->carrier]['rates'][] = $rate;
         }
 
         return $rates;
+    }
+
+    /**
+     * Returns active shipping methods.
+     *
+     * @return array
+     */
+    public function getShippingMethods()
+    {
+        $methods = [];
+
+        foreach (Config::get('carriers') as $shippingMethod) {
+            $object = new $shippingMethod['class'];
+
+            if (! $object->isAvailable()) {
+                continue;
+            }
+
+            $methods[] = [
+                'code' => $object->getCode(),
+                'method' => $object->getMethod(),
+                'method_title' => $object->getTitle(),
+                'description' => $object->getDescription(),
+            ];
+        }
+
+        return $methods;
+    }
+
+    /**
+     * Is method exist in active shipping methods.
+     *
+     * @param  string  $shippingMethodCode
+     * @return bool
+     */
+    public function isMethodCodeExists($shippingMethodCode)
+    {
+        $shippingMethods = $this->collectRates()['shippingMethods'] ?? [];
+
+        if (
+            empty($shippingMethods)
+            || ! $shippingMethods
+        ) {
+            return false;
+        }
+
+        foreach ($shippingMethods as $shippingMethod) {
+            foreach ($shippingMethod['rates'] as $rate) {
+                if ($rate->method === $shippingMethodCode) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }

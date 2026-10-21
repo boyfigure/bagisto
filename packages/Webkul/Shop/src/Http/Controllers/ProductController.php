@@ -2,118 +2,58 @@
 
 namespace Webkul\Shop\Http\Controllers;
 
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Storage;
-use Webkul\Product\Repositories\ProductRepository;
+use Webkul\Core\Helpers\StoredFile;
 use Webkul\Product\Repositories\ProductAttributeValueRepository;
-use Webkul\Product\Repositories\ProductDownloadableSampleRepository;
 use Webkul\Product\Repositories\ProductDownloadableLinkRepository;
+use Webkul\Product\Repositories\ProductDownloadableSampleRepository;
+use Webkul\Product\Repositories\ProductRepository;
+use Webkul\Shop\Traits\ValidatesExternalUrl;
 
-/**
- * Product controller
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class ProductController extends Controller
 {
-
-    /**
-     * Contains route related configuration
-     *
-     * @var array
-     */
-    protected $_config;
-
-    /**
-     * ProductRepository object
-     *
-     * @var array
-     */
-    protected $productRepository;
-
-    /**
-     * ProductAttributeValueRepository object
-     *
-     * @var array
-     */
-    protected $productAttributeValueRepository;
-
-    /**
-     * ProductDownloadableSampleRepository object
-     *
-     * @var array
-     */
-    protected $productDownloadableSampleRepository;
-
-    /**
-     * ProductDownloadableLinkRepository object
-     *
-     * @var array
-     */
-    protected $productDownloadableLinkRepository;
+    use ValidatesExternalUrl;
 
     /**
      * Create a new controller instance.
      *
-     * @param  \Webkul\Product\Repositories\ProductRepository                   $productRepository
-     * @param  \Webkul\Product\Repositories\productAttributeValueRepository     $productAttributeValueRepository
-     * @param  \Webkul\Product\Repositories\ProductDownloadableSampleRepository $productDownloadableSampleRepository
-     * @param  \Webkul\Product\Repositories\ProductDownloadableLinkRepository   $productDownloadableLinkRepository
      * @return void
      */
     public function __construct(
-        ProductRepository $productRepository,
-        ProductAttributeValueRepository $productAttributeValueRepository,
-        ProductDownloadableSampleRepository $productDownloadableSampleRepository,
-        ProductDownloadableLinkRepository $productDownloadableLinkRepository
-    )
-    {
-        $this->productRepository = $productRepository;
-
-        $this->productAttributeValueRepository = $productAttributeValueRepository;
-
-        $this->productDownloadableSampleRepository = $productDownloadableSampleRepository;
-
-        $this->productDownloadableLinkRepository = $productDownloadableLinkRepository;
-
-        $this->_config = request('_config');
-    }
+        protected ProductRepository $productRepository,
+        protected ProductAttributeValueRepository $productAttributeValueRepository,
+        protected ProductDownloadableSampleRepository $productDownloadableSampleRepository,
+        protected ProductDownloadableLinkRepository $productDownloadableLinkRepository
+    ) {}
 
     /**
-     * Display a listing of the resource.
+     * Download image or file.
      *
-     * @param  string $slug
-     * @return \Illuminate\View\View 
-     */
-    public function index($slug)
-    {
-        $product = $this->productRepository->findBySlugOrFail($slug);
-
-        $customer = auth()->guard('customer')->user();
-
-        return view($this->_config['view'], compact('product', 'customer'));
-    }
-
-    /**
-     * Download image or file
-     *
-     * @param  int $productId, $attributeId
-     * @return \Illuminate\Http\Response
+     * @param  int  $productId
+     * @param  int  $attributeId
+     * @return Response
      */
     public function download($productId, $attributeId)
     {
+        if (! $this->isVisibleProduct($productId)) {
+            abort(404);
+        }
+
         $productAttribute = $this->productAttributeValueRepository->findOneWhere([
-            'product_id'   => $productId,
-            'attribute_id' => $attributeId
+            'product_id' => $productId,
+            'attribute_id' => $attributeId,
         ]);
 
-        return Storage::download($productAttribute['text_value']);
+        return isset($productAttribute['text_value'])
+            ? Storage::download($productAttribute['text_value'])
+            : null;
     }
 
     /**
      * Download the for the specified resource.
      *
-     * @return \Illuminate\Http\Response
+     * @return Response|\Exception
      */
     public function downloadSample()
     {
@@ -121,34 +61,67 @@ class ProductController extends Controller
             if (request('type') == 'link') {
                 $productDownloadableLink = $this->productDownloadableLinkRepository->findOrFail(request('id'));
 
-                if ($productDownloadableLink->sample_type == 'file')
-                    return Storage::download($productDownloadableLink->sample_file);
-                else {
-                    $fileName = $name = substr($productDownloadableLink->sample_url, strrpos($productDownloadableLink->sample_url, '/') + 1);
+                if (! $this->isVisibleProduct($productDownloadableLink->product_id)) {
+                    abort(404);
+                }
+
+                if ($productDownloadableLink->sample_type == 'file') {
+                    $privateDisk = Storage::disk('private');
+
+                    return $privateDisk->exists($productDownloadableLink->sample_file)
+                        ? $privateDisk->download($productDownloadableLink->sample_file)
+                        : abort(404);
+                } else {
+                    if (! $this->validateExternalUrl($productDownloadableLink->sample_url)) {
+                        abort(404);
+                    }
+
+                    $fileName = substr($productDownloadableLink->sample_url, strrpos($productDownloadableLink->sample_url, '/') + 1);
 
                     $tempImage = tempnam(sys_get_temp_dir(), $fileName);
 
                     copy($productDownloadableLink->sample_url, $tempImage);
 
-                    return response()->download($tempImage, $fileName);
+                    return response()->download($tempImage, $fileName)->deleteFileAfterSend(true);
                 }
             } else {
                 $productDownloadableSample = $this->productDownloadableSampleRepository->findOrFail(request('id'));
 
-                if ($productDownloadableSample->type == 'file')
-                    return Storage::download($productDownloadableSample->file);
-                else {
-                    $fileName = $name = substr($productDownloadableSample->url, strrpos($productDownloadableSample->url, '/') + 1);
+                if ($product = $this->productRepository->findOrFail($productDownloadableSample->product_id)) {
+                    if (! $product->visible_individually) {
+                        return redirect()->back();
+                    }
+                }
+
+                if ($productDownloadableSample->type == 'file') {
+                    return app(StoredFile::class)->download($productDownloadableSample->file, $productDownloadableSample->file_name);
+                } else {
+                    if (! $this->validateExternalUrl($productDownloadableSample->url)) {
+                        abort(404);
+                    }
+
+                    $fileName = substr($productDownloadableSample->url, strrpos($productDownloadableSample->url, '/') + 1);
 
                     $tempImage = tempnam(sys_get_temp_dir(), $fileName);
 
                     copy($productDownloadableSample->url, $tempImage);
 
-                    return response()->download($tempImage, $fileName);
+                    return response()->download($tempImage, $fileName)->deleteFileAfterSend(true);
                 }
             }
-        } catch(\Exception $e) {
+        } catch (\Exception $e) {
             abort(404);
         }
+    }
+
+    /**
+     * Whether the storefront shows this product at all.
+     */
+    protected function isVisibleProduct($productId): bool
+    {
+        $product = $this->productRepository->find($productId);
+
+        return (bool) $product?->status
+            && (bool) $product?->visible_individually;
     }
 }

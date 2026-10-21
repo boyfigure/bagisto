@@ -2,38 +2,57 @@
 
 namespace Webkul\Product\Repositories;
 
-use Illuminate\Container\Container as App;
+use Illuminate\Container\Container;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
 use Webkul\Core\Eloquent\Repository;
+use Webkul\Product\Contracts\ProductReview;
 
-/**
- * Product Review Reposotory
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class ProductReviewRepository extends Repository
 {
     /**
-     * Specify Model class name
+     * Create a new repository instance.
      *
-     * @return mixed
+     * @return void
      */
-    function model()
-    {
-        return 'Webkul\Product\Contracts\ProductReview';
+    public function __construct(
+        protected ProductReviewAttachmentRepository $productReviewAttachmentRepository,
+        Container $container
+    ) {
+        parent::__construct($container);
     }
 
     /**
-     * Retrieve review for customerId
-     *
-     * @param int $customerId
+     * Specify the model class name.
      */
-    function getCustomerReview()
+    public function model(): string
     {
-        $customerId = auth()->guard('customer')->user()->id;
+        return ProductReview::class;
+    }
 
-        $reviews = $this->model->where(['customer_id'=> $customerId])->with('product')->paginate(5);
+    /**
+     * Create the review together with its attachments, so an attachment that cannot be
+     * sanitized leaves no review behind.
+     */
+    public function createWithAttachments(array $data): ProductReview
+    {
+        return DB::transaction(function () use ($data) {
+            $review = $this->create($data);
 
-        return $reviews;
+            $this->productReviewAttachmentRepository->upload($data['attachments'] ?? [], $review);
+
+            return $review;
+        });
+    }
+
+    /**
+     * Retrieve the reviews a customer has written.
+     */
+    public function getCustomerReviews(int $customerId): LengthAwarePaginator
+    {
+        return $this->model
+            ->where('customer_id', $customerId)
+            ->with('product')
+            ->paginate(5);
     }
 }

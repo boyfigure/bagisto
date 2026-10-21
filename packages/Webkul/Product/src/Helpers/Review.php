@@ -1,93 +1,96 @@
 <?php
 
 namespace Webkul\Product\Helpers;
-use DB;
 
-/**
- * Product Review Helper
- *
- * @author Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
-class Review extends AbstractProduct
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Webkul\Product\Contracts\Product;
+
+class Review
 {
     /**
-     * Returns the product's avg rating
+     * Returns the product's approved reviews.
      *
-     * @param Product $product
-     * @return float
+     * @param  Product  $product
+     * @return HasMany
      */
     public function getReviews($product)
     {
-        static $reviews = [];
-
-        if(array_key_exists($product->id, $reviews))
-            return $reviews[$product->id];
-
-        return $reviews[$product->id] = $product->reviews()->where('status', 'approved');
+        return $product->reviews()->where('status', 'approved');
     }
 
     /**
-     * Returns the product's avg rating
+     * Returns the product's average rating, which is zero until a review is approved.
      *
-     * @param Product $product
-     * @return float
+     * @param  Product  $product
+     * @return string
      */
     public function getAverageRating($product)
     {
-        static $avgRating = [];
-
-        if(array_key_exists($product->id, $avgRating))
-            return $avgRating[$product->id];
-
-        return $avgRating[$product->id] = number_format(round($product->reviews()->where('status', 'approved')->average('rating'), 2), 1);
+        return number_format(round((float) $product->reviews->where('status', 'approved')->avg('rating'), 2), 1);
     }
 
     /**
-     * Returns the total review of the product
+     * Returns the total review of the product.
      *
-    * @param Product $product
-     * @return integer
+     * @param  Product  $product
+     * @return int
      */
     public function getTotalReviews($product)
     {
-        static $totalReviews = [];
-
-        if(array_key_exists($product->id, $totalReviews))
-            return $totalReviews[$product->id];
-
-        return $totalReviews[$product->id] = $product->reviews()->where('status', 'approved')->count();
+        return $product->reviews->where('status', 'approved')->count();
     }
 
-     /**
-     * Returns the total rating of the product
+    /**
+     * Returns the total rating of the product.
      *
-     * @param Product $product
-     * @return integer
+     * @param  Product  $product
+     * @return int
      */
     public function getTotalRating($product)
     {
-        static $totalRating = [];
-
-        if(array_key_exists($product->id, $totalRating))
-            return $totalRating[$product->id];
-
-        return $totalRating[$product->id] = $product->reviews()->where('status','approved')->sum('rating');
+        return $product->reviews->where('status', 'approved')->sum('rating');
     }
 
-     /**
-     * Returns the Percentage rating of the product
+    /**
+     * Returns the total active feedback of the product.
      *
-    * @param Product $product
-     * @return integer
+     * @param  Product  $product
+     * @return int
+     */
+    public function getTotalFeedback($product)
+    {
+        return core()->getConfigData('catalog.products.review.summary') == 'star_counts'
+            ? $this->getTotalRating($product)
+            : $this->getTotalReviews($product);
+    }
+
+    /**
+     * Returns reviews with ratings.
+     *
+     * @param  Product  $product
+     * @return Collection
+     */
+    public function getReviewsWithRatings($product)
+    {
+        return $product->reviews()
+            ->where('status', 'approved')
+            ->select('rating', DB::raw('count(*) as total'))
+            ->groupBy('rating')
+            ->orderBy('rating', 'desc')
+            ->get();
+    }
+
+    /**
+     * Returns the percentage rating of the product.
+     *
+     * @param  Product  $product
+     * @return array
      */
     public function getPercentageRating($product)
     {
-        $reviews = $product->reviews()->where('status', 'approved')
-                    ->select('rating', DB::raw('count(*) as total'))
-                    ->groupBy('rating')
-                    ->orderBy('rating','desc')
-                    ->get();
+        $reviews = $this->getReviewsWithRatings($product);
 
         $totalReviews = $this->getTotalReviews($product);
 
@@ -99,11 +102,11 @@ class Review extends AbstractProduct
 
                         break;
                     } else {
-                        $percentage[$i]=0;
+                        $percentage[$i] = 0;
                     }
                 }
             } else {
-                $percentage[$i]=0;
+                $percentage[$i] = 0;
             }
         }
 

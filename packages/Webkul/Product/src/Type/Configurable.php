@@ -2,209 +2,240 @@
 
 namespace Webkul\Product\Type;
 
-use Webkul\Product\Models\ProductAttributeValue;
-use Webkul\Product\Models\ProductFlat;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Str;
+use Webkul\Admin\Validations\ConfigurableUniqueSku;
+use Webkul\Checkout\Contracts\CartItem;
+use Webkul\Customer\Contracts\Wishlist;
+use Webkul\Product\Contracts\Product;
+use Webkul\Product\DataTypes\CartItemValidationResult;
+use Webkul\Product\Exceptions\InsufficientProductInventoryException;
+use Webkul\Product\Facades\ProductImage;
+use Webkul\Product\Helpers\Indexers\Price\Configurable as ConfigurableIndexer;
+use Webkul\Product\Repositories\ProductRepository;
+use Webkul\Sales\Contracts\InvoiceItem;
+use Webkul\Sales\Contracts\OrderItem;
+use Webkul\Sales\Contracts\ShipmentItem;
+use Webkul\Tax\Facades\Tax;
 
-/**
- * Class Configurable.
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class Configurable extends AbstractType
 {
     /**
-     * Skip attribute for downloadable product type
+     * Skip attribute for configurable product type.
      *
      * @var array
      */
-    protected $skipAttributes = ['price', 'cost', 'special_price', 'special_price_from', 'special_price_to', 'width', 'height', 'depth', 'weight'];
-
-    /**
-     * These blade files will be included in product edit page
-     * 
-     * @var array
-     */
-    protected $additionalViews = [
-        'admin::catalog.products.accordians.images',
-        'admin::catalog.products.accordians.categories',
-        'admin::catalog.products.accordians.variations',
-        'admin::catalog.products.accordians.product-links'
+    protected $skipAttributes = [
+        'price',
+        'cost',
+        'special_price',
+        'special_price_from',
+        'special_price_to',
+        'length',
+        'width',
+        'height',
+        'weight',
+        'manage_stock',
     ];
 
     /**
-     * Is a composite product type
+     * These are the types which can be fillable when generating variant.
      *
-     * @var boolean
+     * @var array
+     */
+    protected $fillableVariantAttributeCodes = [
+        'sku',
+        'name',
+        'url_key',
+        'short_description',
+        'description',
+        'price',
+        'weight',
+        'status',
+        'tax_category_id',
+    ];
+
+    /**
+     * These are the types which can be fillable when generating variant.
+     *
+     * @var Collection
+     */
+    protected $fillableVariantAttributes;
+
+    /**
+     * Is a composite product type.
+     *
+     * @var bool
      */
     protected $isComposite = true;
 
     /**
-     * Show quantity box
+     * Show quantity box.
      *
-     * @var boolean
+     * @var bool
      */
     protected $showQuantityBox = true;
 
     /**
-     * @param array $data
+     * Product can be added to cart with options or not.
+     *
+     * @var bool
+     */
+    protected $canBeAddedToCartWithoutOptions = false;
+
+    /**
+     * Has child products i.e. variants.
+     *
+     * @var bool
+     */
+    protected $hasVariants = true;
+
+    /**
+     * Create configurable product.
+     *
      * @return Product
      */
     public function create(array $data)
     {
-        $product = $this->productRepository->getModel()->create($data);
+        $product = parent::create($data);
 
-        if (isset($data['super_attributes'])) {
-            $super_attributes = [];
+        if (! isset($data['super_attributes'])) {
+            return $product;
+        }
 
-            foreach ($data['super_attributes'] as $attributeCode => $attributeOptions) {
-                $attribute = $this->attributeRepository->findOneByField('code', $attributeCode);
+        /**
+         * Load fillable variant attributes.
+         */
+        $this->fillableVariantAttributes = $this->attributeRepository->findWhereIn('code', $this->fillableVariantAttributeCodes);
 
-                $super_attributes[$attribute->id] = $attributeOptions;
+        $superAttributes = [];
 
-                $product->super_attributes()->attach($attribute->id);
-            }
+        foreach ($data['super_attributes'] as $attributeCode => $attributeOptions) {
+            $attribute = $this->getAttributeByCode($attributeCode);
 
-            foreach (array_permutation($super_attributes) as $permutation) {
-                $this->createVariant($product, $permutation);
-            }
+            $this->fillableVariantAttributes->push($attribute);
+
+            $superAttributes[$attribute->code] = $attributeOptions;
+
+            $product->super_attributes()->attach($attribute->id);
+        }
+
+        foreach (array_permutation($superAttributes) as $permutation) {
+            $this->createVariant($product, $permutation, [
+                'channel' => $data['channel'] ?? core()->getDefaultChannelCode(),
+                'locale' => $data['locale'] ?? core()->getDefaultLocaleCodeFromDefaultChannel(),
+            ]);
         }
 
         return $product;
     }
 
     /**
-     * @param array $data
-     * @param $id
-     * @param string $attribute
+     * Update configurable product.
+     *
+     * @param  int  $id
+     * @param  array  $attributes
      * @return Product
      */
-    public function update(array $data, $id, $attribute = "id")
+    public function update(array $data, $id, $attributes = [])
     {
-        $product = parent::update($data, $id, $attribute);
+        $product = parent::update($data, $id, $attributes);
 
-        if (request()->route()->getName() != 'admin.catalog.products.massupdate') {
-            $previousVariantIds = $product->variants->pluck('id');
+        if (! empty($attributes)) {
+            return $product;
+        }
 
-            if (isset($data['variants'])) {
-                foreach ($data['variants'] as $variantId => $variantData) {
-                    if (str_contains($variantId, 'variant_')) {
-                        $permutation = [];
+        /**
+         * Load fillable variant attributes.
+         */
+        $this->fillableVariantAttributes = $this->attributeRepository->findWhereIn('code', $this->fillableVariantAttributeCodes);
 
-                        foreach ($product->super_attributes as $superAttribute) {
-                            $permutation[$superAttribute->id] = $variantData[$superAttribute->code];
-                        }
+        $previousVariantIds = $product->variants->pluck('id');
 
-                        $this->createVariant($product, $permutation, $variantData);
-                    } else {
-                        if (is_numeric($index = $previousVariantIds->search($variantId)))
-                            $previousVariantIds->forget($index);
+        foreach ($data['variants'] ?? [] as $variantId => $variantData) {
+            if (Str::contains($variantId, 'variant_')) {
+                $superAttributes = [];
 
-                        $variantData['channel'] = $data['channel'];
-                        $variantData['locale'] = $data['locale'];
+                foreach ($product->super_attributes as $superAttribute) {
+                    $superAttributes[$superAttribute->id] = $variantData[$superAttribute->code];
 
-                        $this->updateVariant($variantData, $variantId);
-                    }
+                    $this->fillableVariantAttributes->push($superAttribute);
                 }
-            }
 
-            foreach ($previousVariantIds as $variantId) {
-                $this->productRepository->delete($variantId);
+                $this->createVariant($product, $superAttributes, array_merge($variantData, [
+                    'channel' => $data['channel'] ?? core()->getDefaultChannelCode(),
+                    'locale' => $data['locale'] ?? core()->getDefaultLocaleCodeFromDefaultChannel(),
+                ]));
+            } else {
+                if (is_numeric($index = $previousVariantIds->search($variantId))) {
+                    $previousVariantIds->forget($index);
+                }
+
+                $this->updateVariant(array_merge($variantData, [
+                    'channel' => $data['channel'] ?? core()->getDefaultChannelCode(),
+                    'locale' => $data['locale'] ?? core()->getDefaultLocaleCodeFromDefaultChannel(),
+                    'tax_category_id' => $data['tax_category_id'] ?? null,
+                ]), $variantId);
             }
+        }
+
+        foreach ($previousVariantIds as $variantId) {
+            $this->productRepository->delete($variantId);
         }
 
         return $product;
     }
 
     /**
-     * @param mixed $product
-     * @param array $permutation
-     * @param array $data
-     * @return mixed
+     * Create variant.
+     *
+     * @param  Product  $product
+     * @param  array  $superAttributes
+     * @param  array  $data
+     * @return Product
      */
-    public function createVariant($product, $permutation, $data = [])
+    public function createVariant($product, $superAttributes, $data = [])
     {
-        if (! count($data)) {
-            $data = [
-                    "sku" => $product->sku . '-variant-' . implode('-', $permutation),
-                    "name" => "",
-                    "inventories" => [],
-                    "price" => 0,
-                    "weight" => 0,
-                    "status" => 1
-                ];
+        $sku = $product->sku.'-variant-'.implode('-', $superAttributes);
+
+        $data = array_merge([
+            'sku' => $sku,
+            'name' => 'Variant '.implode(' ', $superAttributes),
+            'price' => 0,
+            'weight' => 0,
+            'status' => 1,
+            'tax_category_id' => null,
+            'url_key' => $sku,
+            'short_description' => $sku,
+            'description' => $sku,
+            'inventories' => [],
+        ], $data);
+
+        $variant = parent::create([
+            'type' => 'simple',
+            'sku' => $sku,
+            'attribute_family_id' => $product->attribute_family_id,
+            'parent_id' => $product->id,
+        ]);
+
+        foreach ($superAttributes as $attributeCode => $optionId) {
+            $data[$attributeCode] = $optionId;
         }
 
-        $variant = $this->productRepository->getModel()->create([
-                'parent_id' => $product->id,
-                'type' => 'simple',
-                'attribute_family_id' => $product->attribute_family_id,
-                'sku' => $data['sku'],
-            ]);
-
-        foreach (['sku', 'name', 'price', 'weight', 'status'] as $attributeCode) {
-            $attribute = $this->attributeRepository->findOneByField('code', $attributeCode);
-
-            if ($attribute->value_per_channel) {
-                if ($attribute->value_per_locale) {
-                    foreach (core()->getAllChannels() as $channel) {
-                        foreach (core()->getAllLocales() as $locale) {
-                            $this->attributeValueRepository->create([
-                                    'product_id' => $variant->id,
-                                    'attribute_id' => $attribute->id,
-                                    'channel' => $channel->code,
-                                    'locale' => $locale->code,
-                                    'value' => $data[$attributeCode]
-                                ]);
-                        }
-                    }
-                } else {
-                    foreach (core()->getAllChannels() as $channel) {
-                        $this->attributeValueRepository->create([
-                                'product_id' => $variant->id,
-                                'attribute_id' => $attribute->id,
-                                'channel' => $channel->code,
-                                'value' => $data[$attributeCode]
-                            ]);
-                    }
-                }
-            } else {
-                if ($attribute->value_per_locale) {
-                    foreach (core()->getAllLocales() as $locale) {
-                        $this->attributeValueRepository->create([
-                                'product_id' => $variant->id,
-                                'attribute_id' => $attribute->id,
-                                'locale' => $locale->code,
-                                'value' => $data[$attributeCode]
-                            ]);
-                    }
-                } else {
-                    $this->attributeValueRepository->create([
-                            'product_id' => $variant->id,
-                            'attribute_id' => $attribute->id,
-                            'value' => $data[$attributeCode]
-                        ]);
-                }
-            }
-        }
-
-        foreach ($permutation as $attributeId => $optionId) {
-            $this->attributeValueRepository->create([
-                    'product_id' => $variant->id,
-                    'attribute_id' => $attributeId,
-                    'value' => $optionId
-                ]);
-        }
+        $this->attributeValueRepository->saveValues($data, $variant, $this->fillableVariantAttributes);
 
         $this->productInventoryRepository->saveInventories($data, $variant);
+
+        $this->productImageRepository->upload($data, $variant, 'images');
 
         return $variant;
     }
 
     /**
-     * @param array $data
-     * @param $id
-     * @return mixed
+     * Update variant.
+     *
+     * @param  int  $id
+     * @return Product
      */
     public function updateVariant(array $data, $id)
     {
@@ -212,77 +243,40 @@ class Configurable extends AbstractType
 
         $variant->update(['sku' => $data['sku']]);
 
-        foreach (['sku', 'name', 'price', 'weight', 'status'] as $attributeCode) {
-            $attribute = $this->attributeRepository->findOneByField('code', $attributeCode);
-
-            $attributeValue = $this->attributeValueRepository->findOneWhere([
-                    'product_id' => $id,
-                    'attribute_id' => $attribute->id,
-                    'channel' => $attribute->value_per_channel ? $data['channel'] : null,
-                    'locale' => $attribute->value_per_locale ? $data['locale'] : null
-                ]);
-
-            if (! $attributeValue) {
-                $this->attributeValueRepository->create([
-                        'product_id' => $id,
-                        'attribute_id' => $attribute->id,
-                        'value' => $data[$attribute->code],
-                        'channel' => $attribute->value_per_channel ? $data['channel'] : null,
-                        'locale' => $attribute->value_per_locale ? $data['locale'] : null
-                    ]);
-            } else {
-                $this->attributeValueRepository->update([
-                    ProductAttributeValue::$attributeTypeFields[$attribute->type] => $data[$attribute->code]
-                ], $attributeValue->id);
-            }
-        }
+        $this->attributeValueRepository->saveValues($data, $variant, $this->fillableVariantAttributes);
 
         $this->productInventoryRepository->saveInventories($data, $variant);
+
+        $this->productImageRepository->upload($data, $variant, 'images');
+
+        $variant->channels()->sync($variant->parent->channels->pluck('id')->toArray());
 
         return $variant;
     }
 
     /**
-     * @param array $data
-     * @param mixed $product
-     * @return mixed
+     * Returns children ids.
+     *
+     * @return array
      */
-    public function checkVariantOptionAvailabiliy($data, $product)
+    public function getChildrenIds()
     {
-        $superAttributeCodes = $product->parent->super_attributes->pluck('code');
-
-        foreach ($product->parent->variants as $variant) {
-            if ($variant->id == $product->id)
-                continue;
-
-            $matchCount = 0;
-
-            foreach ($superAttributeCodes as $attributeCode) {
-                if (! isset($data[$attributeCode]))
-                    return false;
-
-                if ($data[$attributeCode] == $variant->{$attributeCode})
-                    $matchCount++;
-            }
-
-            if ($matchCount == $superAttributeCodes->count())
-                return true;
-        }
-
-        return false;
+        return $this->product->variants()->pluck('id')->toArray();
     }
 
     /**
-     * @param CartItem $cartItem
+     * Is item have quantity.
+     *
+     * @param  CartItem  $cartItem
      * @return bool
      */
     public function isItemHaveQuantity($cartItem)
     {
-        return $cartItem->child->product->getTypeInstance()->haveSufficientQuantity($cartItem->quantity);
+        return $cartItem->child->getTypeInstance()->haveSufficientQuantity($cartItem->quantity);
     }
 
     /**
-     * Returns validation rules
+     * Return validation rules.
      *
      * @return array
      */
@@ -290,174 +284,183 @@ class Configurable extends AbstractType
     {
         return [
             'variants.*.name' => 'required',
-            'variants.*.sku' => 'required',
+            'variants.*.sku' => [
+                'required',
+                new ConfigurableUniqueSku($this->getChildrenIds()),
+            ],
             'variants.*.price' => 'required',
             'variants.*.weight' => 'required',
         ];
     }
 
     /**
-     * Return true if item can be moved to cart from wishlist
+     * Return true if item can be moved to cart from wishlist.
      *
-     * @param Wishlist $item
-     * @return boolean
+     * @param  Wishlist  $item
+     * @return bool
      */
     public function canBeMovedFromWishlistToCart($item)
     {
-        if (isset($item->additional['selected_configurable_option']))
-            return true;
-
-        return false;
+        return isset($item->additional['selected_configurable_option']);
     }
 
     /**
-     * Get product minimal price
+     * Get product prices.
      *
-     * @return float
+     * @return array
      */
-    public function getMinimalPrice()
+    public function getProductPrices()
     {
-        $minPrices = [];
+        $regularMinPrice = $this->getRegularMinimalPrice();
 
-        $result = ProductFlat::join('products', 'product_flat.product_id', '=', 'products.id')
-            ->distinct()
-            ->where('products.parent_id', $this->product->id)
-            ->selectRaw('IF( product_flat.special_price_from IS NOT NULL
-            AND product_flat.special_price_to IS NOT NULL , IF( NOW( ) >= product_flat.special_price_from
-            AND NOW( ) <= product_flat.special_price_to, IF( product_flat.special_price IS NULL OR product_flat.special_price = 0 , product_flat.price, LEAST( product_flat.special_price, product_flat.price ) ) , product_flat.price ) , IF( product_flat.special_price_from IS NULL , IF( product_flat.special_price_to IS NULL , IF( product_flat.special_price IS NULL OR product_flat.special_price = 0 , product_flat.price, LEAST( product_flat.special_price, product_flat.price ) ) , IF( NOW( ) <= product_flat.special_price_to, IF( product_flat.special_price IS NULL OR product_flat.special_price = 0 , product_flat.price, LEAST( product_flat.special_price, product_flat.price ) ) , product_flat.price ) ) , IF( product_flat.special_price_to IS NULL , IF( NOW( ) >= product_flat.special_price_from, IF( product_flat.special_price IS NULL OR product_flat.special_price = 0 , product_flat.price, LEAST( product_flat.special_price, product_flat.price ) ) , product_flat.price ) , product_flat.price ) ) ) AS min_price')
-            ->where('product_flat.channel', core()->getCurrentChannelCode())
-            ->where('product_flat.locale', app()->getLocale())
-            ->get();
+        $minPrice = $this->getMinimalPrice();
 
-        foreach ($result as $price) {
-            $minPrices[] = $price->min_price;
-        }
+        return [
+            'regular' => [
+                'price' => $regularMinPrice,
+                'formatted_price' => core()->currency($regularMinPrice),
+            ],
 
-        if (empty($minPrices))
-            return 0;
-
-        return min($minPrices);
+            'final' => [
+                'price' => $minPrice,
+                'formatted_price' => core()->currency($minPrice),
+            ],
+        ];
     }
 
     /**
-     * Get product maximam price
-     *
-     * @return float
-     */
-    public function getMaximamPrice()
-    {
-        $productFlat = ProductFlat::join('products', 'product_flat.product_id', '=', 'products.id')
-            ->distinct()
-            ->where('products.parent_id', $this->product->id)
-            ->selectRaw('MAX(product_flat.price) AS max_price')
-            ->where('product_flat.channel', core()->getCurrentChannelCode())
-            ->where('product_flat.locale', app()->getLocale())
-            ->first();
-
-        return $productFlat ? $productFlat->max_price : 0;
-    }
-
-    /**
-     * Get product minimal price
+     * Get product minimal price.
      *
      * @return string
      */
     public function getPriceHtml()
     {
-        return '<span class="price-label">' . trans('shop::app.products.price-label') . '</span>'
-            . '<span class="final-price">' . core()->currency($this->getMinimalPrice()) . '</span>';
+        return view('shop::products.prices.configurable', [
+            'product' => $this->product,
+            'prices' => $this->getProductPrices(),
+        ])->render();
     }
 
     /**
      * Add product. Returns error message if can't prepare product.
      *
-     * @param array   $data
-     * @return array
+     * @param  array  $data
+     * @return array|string
+     *
+     * @throws InsufficientProductInventoryException
      */
     public function prepareForCart($data)
     {
-        if (! isset($data['selected_configurable_option']) || ! $data['selected_configurable_option'])
-            return trans('shop::app.checkout.cart.integrity.missing_options');
+        $data['quantity'] = parent::handleQuantity((int) ($data['quantity'] ?? 1));
+
+        if (empty($data['selected_configurable_option'])) {
+            return trans('product::app.checkout.cart.missing-options');
+        }
 
         $data = $this->getQtyRequest($data);
 
+        if (! in_array((int) $data['selected_configurable_option'], $this->getChildrenIds(), true)) {
+            return trans('product::app.checkout.cart.missing-options');
+        }
+
         $childProduct = $this->productRepository->find($data['selected_configurable_option']);
 
-        if (! $childProduct->haveSufficientQuantity($data['quantity']))
-            return trans('shop::app.checkout.cart.quantity.inventory_warning');
+        if (! $childProduct->haveSufficientQuantity($data['quantity'])) {
+            throw new InsufficientProductInventoryException(trans('product::app.checkout.cart.inventory-warning'));
+        }
 
         $price = $childProduct->getTypeInstance()->getFinalPrice();
 
-        $products = [
+        return [
             [
                 'product_id' => $this->product->id,
                 'sku' => $this->product->sku,
-                'quantity' => $data['quantity'],
                 'name' => $this->product->name,
+                'type' => $this->product->type,
+                'quantity' => $data['quantity'],
                 'price' => $convertedPrice = core()->convertPrice($price),
+                'price_incl_tax' => $convertedPrice,
                 'base_price' => $price,
+                'base_price_incl_tax' => $price,
                 'total' => $convertedPrice * $data['quantity'],
+                'total_incl_tax' => $convertedPrice * $data['quantity'],
                 'base_total' => $price * $data['quantity'],
+                'base_total_incl_tax' => $price * $data['quantity'],
                 'weight' => $childProduct->weight,
                 'total_weight' => $childProduct->weight * $data['quantity'],
                 'base_total_weight' => $childProduct->weight * $data['quantity'],
-                'type' => $this->product->type,
-                'additional' => $this->getAdditionalOptions($data)
+                'additional' => $this->getAdditionalOptions($data),
             ], [
                 'parent_id' => $this->product->id,
                 'product_id' => (int) $data['selected_configurable_option'],
                 'sku' => $childProduct->sku,
                 'name' => $childProduct->name,
-                'type' => 'simple',
-                'additional' => ['product_id' => (int) $data['selected_configurable_option'], 'parent_id' => $this->product->id]
-            ]
+                'type' => $childProduct->type,
+                'additional' => [
+                    'product_id' => (int) $data['selected_configurable_option'],
+                    'parent_id' => $this->product->id,
+                ],
+            ],
         ];
-
-        return $products;
     }
-    
+
     /**
+     * Compare options.
      *
-     * @param array $options1
-     * @param array $options2
-     * @return boolean
+     * @param  array  $options1
+     * @param  array  $options2
+     * @return bool
      */
     public function compareOptions($options1, $options2)
     {
-        if ($this->product->id != $options2['product_id'])
+        if ($this->product->id != $options2['product_id']) {
             return false;
+        }
 
-        return $options1['selected_configurable_option'] === $options2['selected_configurable_option'];
+        if (
+            isset($options1['selected_configurable_option'])
+            && isset($options2['selected_configurable_option'])
+        ) {
+            return $options1['selected_configurable_option'] === $options2['selected_configurable_option'];
+        }
+
+        if (! isset($options1['selected_configurable_option'])) {
+            return false;
+        }
+
+        if (! isset($options2['selected_configurable_option'])) {
+            return false;
+        }
     }
 
     /**
-     * Returns additional information for items
+     * Return additional information for items.
      *
-     * @param array $data
+     * @param  array  $data
      * @return array
      */
     public function getAdditionalOptions($data)
     {
-        $childProduct = app('Webkul\Product\Repositories\ProductRepository')->findOneByField('id', $data['selected_configurable_option']);
+        $childProduct = app(ProductRepository::class)->find($data['selected_configurable_option']);
 
         foreach ($this->product->super_attributes as $attribute) {
             $option = $attribute->options()->where('id', $childProduct->{$attribute->code})->first();
 
             $data['attributes'][$attribute->code] = [
-                'attribute_name' => $attribute->name ?  $attribute->name : $attribute->admin_name,
+                'attribute_name' => $attribute->name ? $attribute->name : $attribute->admin_name,
                 'option_id' => $option->id,
-                'option_label' => $option->label,
+                'option_label' => $option->label ? $option->label : $option->admin_name,
             ];
         }
 
-        return $data;        
+        return $data;
     }
 
     /**
-     * Get actual ordered item
+     * Get actual ordered item.
      *
-     * @param CartItem $item
-     * @return CartItem|OrderItem|InvoiceItem|ShipmentItem
+     * @param  CartItem  $item
+     * @return CartItem|OrderItem|InvoiceItem|ShipmentItem|Wishlist
      */
     public function getOrderedItem($item)
     {
@@ -465,23 +468,157 @@ class Configurable extends AbstractType
     }
 
     /**
-     * Get product base image
+     * Get product base image.
      *
-     * @param Wishlist|CartItem $item
+     * @param  Wishlist|CartItem  $item
      * @return array
      */
     public function getBaseImage($item)
     {
-        if ($item instanceof \Webkul\Customer\Contracts\Wishlist) {
+        $product = $item->product;
+
+        if ($item instanceof Wishlist) {
             if (isset($item->additional['selected_configurable_option'])) {
                 $product = $this->productRepository->find($item->additional['selected_configurable_option']);
-            } else {
-                $product = $item->product;
             }
         } else {
-            $product = $item->child->product;
+            if (count($item->child->product->images)) {
+                $product = $item->child->product;
+            }
         }
 
-        return $this->productImageHelper->getProductBaseImage($product);
+        return ProductImage::getProductBaseImage($product);
+    }
+
+    /**
+     * Validate cart item product price.
+     */
+    public function validateCartItem(CartItem $item): CartItemValidationResult
+    {
+        $validation = new CartItemValidationResult;
+
+        if ($this->isCartItemInactive($item)) {
+            $validation->itemIsInactive();
+
+            return $validation;
+        }
+
+        $basePrice = $item->child->getTypeInstance()->getFinalPrice($item->quantity);
+
+        if (Tax::isInclusiveTaxProductPrices()) {
+            $itemBasePrice = $item->base_price_incl_tax;
+        } else {
+            $itemBasePrice = $item->base_price;
+        }
+
+        if ($basePrice == $itemBasePrice) {
+            return $validation;
+        }
+
+        $item->base_price = $basePrice;
+        $item->base_price_incl_tax = $basePrice;
+
+        $item->price = ($price = core()->convertPrice($basePrice));
+        $item->price_incl_tax = $price;
+
+        $item->base_total = $basePrice * $item->quantity;
+        $item->base_total_incl_tax = $basePrice * $item->quantity;
+
+        $item->total = ($total = core()->convertPrice($basePrice * $item->quantity));
+        $item->total_incl_tax = $total;
+
+        $item->save();
+
+        return $validation;
+    }
+
+    /**
+     * Is product have sufficient quantity.
+     */
+    public function haveSufficientQuantity(int $qty): bool
+    {
+        foreach ($this->product->variants as $variant) {
+            if ($variant->haveSufficientQuantity($qty)) {
+                return true;
+            }
+        }
+
+        return (bool) core()->getConfigData('catalog.inventory.stock_options.back_orders');
+    }
+
+    /**
+     * Return true if this product type is saleable.
+     *
+     * @return bool
+     */
+    public function isSaleable()
+    {
+        foreach ($this->product->variants as $variant) {
+            if ($variant->isSaleable()) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Return total quantity.
+     *
+     * @return int
+     */
+    public function totalQuantity()
+    {
+        $total = 0;
+
+        foreach ($this->product->variants as $variant) {
+            $inventoryIndex = $variant->totalQuantity();
+
+            $total += $inventoryIndex->qty;
+        }
+
+        return $total;
+    }
+
+    /**
+     * Returns price indexer class for a specific product type.
+     *
+     * @return string
+     */
+    public function getPriceIndexer()
+    {
+        return app(ConfigurableIndexer::class);
+    }
+
+    /**
+     * Copy relationships.
+     *
+     * @param  \Webkul\Product\Models\Product  $product
+     * @return void
+     */
+    protected function copyRelationships($product)
+    {
+        parent::copyRelationships($product);
+
+        $attributesToSkip = config('products.copy.skip_attributes') ?? [];
+
+        if (
+            in_array('super_attributes', $attributesToSkip)
+            || in_array('variants', $attributesToSkip)
+        ) {
+            return;
+        }
+
+        foreach ($this->product->super_attributes as $superAttribute) {
+            $product->super_attributes()->save($superAttribute);
+        }
+
+        foreach ($this->product->variants as $variant) {
+            $newVariant = $variant->getTypeInstance()->copy();
+
+            $newVariant->parent_id = $product->id;
+
+            $newVariant->save();
+        }
     }
 }

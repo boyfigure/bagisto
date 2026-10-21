@@ -2,36 +2,40 @@
 
 namespace Webkul\Core\Repositories;
 
+use Illuminate\Support\Facades\Event;
+use Webkul\Core\Contracts\Currency;
 use Webkul\Core\Eloquent\Repository;
 
-/**
- * Currency Reposotory
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class CurrencyRepository extends Repository
 {
     /**
-     * Specify Model class name
-     *
-     * @return mixed
+     * Specify model class name.
      */
-    function model()
+    public function model(): string
     {
-        return 'Webkul\Core\Contracts\Currency';
+        return Currency::class;
     }
 
-    public function delete($id) {
+    /**
+     * Delete.
+     *
+     * @param  int  $id
+     * @return bool
+     */
+    public function delete($id)
+    {
+        Event::dispatch('core.currency.delete.before', $id);
+
         if ($this->model->count() == 1) {
             return false;
-        } else {
-            if ($this->model->destroy($id)) {
-                return true;
-            } else {
-                return false;
-            }
-
         }
+
+        if (parent::delete($id)) {
+            Event::dispatch('core.currency.delete.after', $id);
+
+            return true;
+        }
+
+        return false;
     }
 }

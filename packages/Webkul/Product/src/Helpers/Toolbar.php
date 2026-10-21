@@ -2,147 +2,176 @@
 
 namespace Webkul\Product\Helpers;
 
-/**
- * Toolbar Helper
- *
- * @author Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
-class Toolbar extends AbstractProduct
+use Illuminate\Support\Collection;
+
+class Toolbar
 {
     /**
-     * Returns available sort orders
+     * Page sizes the storefront falls back to when none are configured.
      *
-     * @param string $key
-     * @return string
+     * @var array
      */
-    public function getAvailableOrders()
-    {
-        return [
-            'name-asc' => 'from-a-z',
-            'name-desc' => 'from-z-a',
-            'created_at-desc' => 'newest-first',
-            'created_at-asc' => 'oldest-first',
-            'price-asc' => 'cheapest-first',
-            'price-desc' => 'expensive-first'
-        ];
-    }
-    /**
-     * Returns available limits
-     *
-     * @param string $key
-     * @return string
-     */
-    public function getAvailableLimits()
-    {
-        return [9, 15, 21, 28];
-    }
+    public const DEFAULT_LIMITS = [12, 24, 36, 48];
 
     /**
-     * Returns the sort order url
-     *
-     * @param string $key
-     * @return string
+     * Returns available sort orders.
      */
-    public function getOrderUrl($key)
+    public function getAvailableOrders(): Collection
     {
-        $keys = explode('-', $key);
-
-        return request()->fullUrlWithQuery([
-                'sort' => current($keys),
-                'order' => end($keys)
-            ]);
-    }
-
-    /**
-     * Returns the limit url
-     *
-     * @param integer $limit
-     * @return string
-     */
-    public function getLimitUrl($limit)
-    {
-        return request()->fullUrlWithQuery([
-                'limit' => $limit
-            ]);
-    }
-
-    /**
-     * Returns the mode url
-     *
-     * @param string $mode
-     * @return string
-     */
-    public function getModeUrl($mode)
-    {
-        return request()->fullUrlWithQuery([
-                'mode' => $mode
-            ]);
+        return collect([
+            [
+                'title' => trans('product::app.sort-by.options.from-a-z'),
+                'value' => 'name-asc',
+                'sort' => 'name',
+                'order' => 'asc',
+                'position' => 1,
+            ],
+            [
+                'title' => trans('product::app.sort-by.options.from-z-a'),
+                'value' => 'name-desc',
+                'sort' => 'name',
+                'order' => 'desc',
+                'position' => 2,
+            ],
+            [
+                'title' => trans('product::app.sort-by.options.latest-first'),
+                'value' => 'created_at-desc',
+                'sort' => 'created_at',
+                'order' => 'desc',
+                'position' => 3,
+            ],
+            [
+                'title' => trans('product::app.sort-by.options.oldest-first'),
+                'value' => 'created_at-asc',
+                'sort' => 'created_at',
+                'order' => 'asc',
+                'position' => 4,
+            ],
+            [
+                'title' => trans('product::app.sort-by.options.cheapest-first'),
+                'value' => 'price-asc',
+                'sort' => 'price',
+                'order' => 'asc',
+                'position' => 5,
+            ],
+            [
+                'title' => trans('product::app.sort-by.options.expensive-first'),
+                'value' => 'price-desc',
+                'sort' => 'price',
+                'order' => 'desc',
+                'position' => 6,
+            ],
+        ]);
     }
 
     /**
-     * Checks if sort order is active
-     *
-     * @param string $key
-     * @return boolean
+     * Get default order. This is a crucial part of our system configuration.
+     * It should either be available or fail. There should be no further proceeding.
      */
-    public function isOrderCurrent($key)
+    public function getDefaultOrder(): array
     {
-        $params = request()->input();
-
-        if (isset($params['sort']) && $key == $params['sort'] . '-' . $params['order'])
-            return true;
-        else if (! isset($params['sort']) && $key == 'created_at-desc')
-            return true;
-
-        return false;
+        return $this->getAvailableOrders()
+            ->where('value', core()->getConfigData('catalog.products.storefront.sort_by') ?? 'price-desc')
+            ->firstOrFail();
     }
 
     /**
-     * Checks if limit is active
-     *
-     * @param integer $limit
-     * @return boolean
+     * Get order.
      */
-    public function isLimitCurrent($limit)
+    public function getOrder(array $params = []): array
     {
-        $params = request()->input();
+        if (! isset($params['sort'])) {
+            return $this->getDefaultOrder();
+        }
 
-        if (isset($params['limit']) && $limit == $params['limit'])
-            return true;
+        $order = $this->getAvailableOrders()
+            ->where('value', $params['sort'])
+            ->first();
 
-        return false;
+        return $order ?: $this->getDefaultOrder();
     }
 
     /**
-     * Checks if mode is active
-     *
-     * @param string $key
-     * @return boolean
+     * Returns available limits.
      */
-    public function isModeActive($key)
+    public function getAvailableLimits(): Collection
     {
-        $params = request()->input();
+        $limits = collect(explode(',', (string) core()->getConfigData('catalog.products.storefront.products_per_page')))
+            ->map(fn ($limit) => trim($limit))
+            ->filter(fn ($limit) => ctype_digit($limit) && (int) $limit > 0)
+            ->map(fn ($limit) => (int) $limit)
+            ->unique()
+            ->values();
 
-        if (isset($params['mode']) && $key == $params['mode'])
-            return true;
-
-        return false;
+        return $limits->isNotEmpty()
+            ? $limits
+            : collect(self::DEFAULT_LIMITS);
     }
 
     /**
-     * Returns the current mode
-     *
-     * @param string $mode
-     * @return string
+     * Returns default limit. By default it will be 12. Leaved a
+     * space for the admin configuration and customization.
      */
-    public function getCurrentMode()
+    public function getDefaultLimit(): int
     {
-        $params = request()->input();
+        return $this->getAvailableLimits()->first();
+    }
 
-        if (isset($params['mode']))
-            return $params['mode'];
+    /**
+     * Get limit.
+     */
+    public function getLimit(array $params): int
+    {
+        /**
+         * Set a default value for the 'limit' parameter,
+         * in case it is not provided or is not a valid integer.
+         */
+        $limit = (int) ($params['limit'] ?? $this->getDefaultLimit());
 
-        return 'grid';
+        /**
+         * If the 'limit' parameter is present but value not present
+         * in available limits, use the default value instead.
+         */
+        return in_array($limit, $this->getAvailableLimits()->toArray())
+            ? $limit
+            : $this->getDefaultLimit();
+    }
+
+    /**
+     * Returns available modes.
+     */
+    public function getAvailableModes(): Collection
+    {
+        return collect(['grid', 'list']);
+    }
+
+    /**
+     * Returns default mode.
+     *
+     * @return int
+     */
+    public function getDefaultMode(): string
+    {
+        return core()->getConfigData('catalog.products.storefront.mode') ?? 'grid';
+    }
+
+    /**
+     * Get mode.
+     */
+    public function getMode(array $params): string
+    {
+        /**
+         * Set a default value for the 'mode' parameter,
+         * in case it is not provided.
+         */
+        $mode = $params['mode'] ?? $this->getDefaultMode();
+
+        /**
+         * If the 'mode' parameter is present but value not present
+         * in available modes, use the default mode instead.
+         */
+        return in_array($mode, $this->getAvailableModes()->toArray())
+            ? $mode
+            : $this->getDefaultMode();
     }
 }

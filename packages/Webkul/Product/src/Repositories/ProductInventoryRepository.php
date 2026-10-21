@@ -2,57 +2,39 @@
 
 namespace Webkul\Product\Repositories;
 
-use Illuminate\Container\Container as App;
 use Webkul\Core\Eloquent\Repository;
+use Webkul\Product\Contracts\ProductInventory;
 
-/**
- * Product Inventory Reposotory
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class ProductInventoryRepository extends Repository
 {
     /**
-     * Specify Model class name
-     *
-     * @return mixed
+     * Specify the model class name.
      */
-    function model()
+    public function model(): string
     {
-        return 'Webkul\Product\Contracts\ProductInventory';
+        return ProductInventory::class;
     }
 
     /**
-     * @param array $data
-     * @param mixed $product
-     * @return mixed
+     * Save the quantity a product holds in each inventory source.
+     *
+     * @param  Webkul\Product\Contracts\Product  $product
+     * @return void
      */
     public function saveInventories(array $data, $product)
     {
-        if (isset($data['inventories'])) {
-            foreach ($data['inventories'] as $inventorySourceId => $qty) {
-                $qty = is_null($qty) ? 0 : $qty;
+        if (! isset($data['inventories'])) {
+            return;
+        }
 
-                $productInventory = $this->findOneWhere([
-                        'product_id' => $product->id,
-                        'inventory_source_id' => $inventorySourceId,
-                        'vendor_id' => isset($data['vendor_id']) ? $data['vendor_id'] : 0
-                    ]);
-
-                if ($productInventory) {
-                    $productInventory->qty = $qty;
-
-                    $productInventory->save();
-                } else {
-                    $this->create([
-                            'qty' => $qty,
-                            'product_id' => $product->id,
-                            'inventory_source_id' => $inventorySourceId,
-                            'vendor_id' => isset($data['vendor_id']) ? $data['vendor_id'] : 0
-                        ]);
-                }
-            }
+        foreach ($data['inventories'] as $inventorySourceId => $qty) {
+            $this->updateOrCreate([
+                'product_id' => $product->id,
+                'inventory_source_id' => $inventorySourceId,
+                'vendor_id' => $data['vendor_id'] ?? 0,
+            ], [
+                'qty' => $qty ?? 0,
+            ]);
         }
     }
 }

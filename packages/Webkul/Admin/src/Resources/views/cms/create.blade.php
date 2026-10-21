@@ -1,153 +1,241 @@
-@extends('admin::layouts.content')
+<x-admin::layouts>
+    <!--Page title -->
+    <x-slot:title>
+        @lang('admin::app.cms.create.title')
+    </x-slot>
 
-@section('page_title')
-    {{ __('admin::app.cms.pages.add-title') }}
-@stop
+    <!--Create Page Form -->
+    <x-admin::form
+        :action="route('admin.cms.store')"
+        enctype="multipart/form-data"
+    >
 
-@section('content')
-    <div class="content">
-        <form method="POST" action="{{ route('admin.cms.store') }}" @submit.prevent="onSubmit">
+        {!! view_render_event('bagisto.admin.cms.pages.create.create_form_controls.before') !!}
 
-            <div class="page-header">
-                <div class="page-title">
-                    <h1>
-                        <i class="icon angle-left-icon back-link" onclick="history.length > 1 ? history.go(-1) : window.location = '{{ url('/admin/dashboard') }}';"></i>
+        <div class="flex items-center justify-between gap-4 max-sm:flex-wrap">
+            <p class="text-xl font-bold text-gray-800 dark:text-white">
+                @lang('admin::app.cms.create.title')
+            </p>
 
-                        {{ __('admin::app.cms.pages.pages') }}
-                    </h1>
-                </div>
 
-                <div class="page-action">
-                    <button type="submit" class="btn btn-lg btn-primary">
-                        {{ __('admin::app.cms.pages.create-btn-title') }}
-                    </button>
-                </div>
+            <div class="flex items-center gap-x-2.5">
+                <!-- Back Button -->
+                <a
+                    href="{{ route('admin.cms.index') }}"
+                    class="transparent-button hover:bg-gray-200 dark:text-white dark:hover:bg-gray-800"
+                >
+                    @lang('admin::app.account.edit.back-btn')
+                </a>
+
+                <!--Save Button -->
+                <button
+                    type="submit"
+                    class="primary-button"
+                >
+                    @lang('admin::app.cms.create.save-btn')
+                </button>
             </div>
-
-            <div class="page-content">
-
-                <div class="form-container">
-                    @csrf()
-                    <accordian :title="'{{ __('admin::app.cms.pages.general') }}'" :active="true">
-                        <div slot="body">
-                            <div class="control-group" :class="[errors.has('page_title') ? 'has-error' : '']">
-                                <label for="page_title" class="required">{{ __('admin::app.cms.pages.page-title') }}</label>
-
-                                <input type="text" class="control" name="page_title" v-validate="'required'" value="{{ old('page_title') }}" data-vv-as="&quot;{{ __('admin::app.cms.pages.page-title') }}&quot;">
-
-                                <span class="control-error" v-if="errors.has('page_title')">@{{ errors.first('page_title') }}</span>
-                            </div>
-
-                            <div class="control-group" :class="[errors.has('url_key') ? 'has-error' : '']">
-                                <label for="url-key" class="required">{{ __('admin::app.cms.pages.url-key') }}</label>
-
-                                <input type="text" class="control" name="url_key" v-validate="'required'" value="{{ old('url-key') }}" data-vv-as="&quot;{{ __('admin::app.cms.pages.url-key') }}&quot;" v-slugify>
-
-                                <span class="control-error" v-if="errors.has('url_key')">@{{ errors.first('url_key') }}</span>
-                            </div>
-
-                            @inject('channels', 'Webkul\Core\Repositories\ChannelRepository')
-                            @inject('locales', 'Webkul\Core\Repositories\LocaleRepository')
-
-                            <div class="control-group" :class="[errors.has('channels[]') ? 'has-error' : '']">
-                                <label for="url-key" class="required">{{ __('admin::app.cms.pages.channel') }}</label>
-
-                                <select type="text" class="control" name="channels[]" v-validate="'required'" value="{{ old('channel[]') }}" data-vv-as="&quot;{{ __('admin::app.cms.pages.channel') }}&quot;" multiple="multiple">
-                                    @foreach($channels->all() as $channel)
-                                        <option value="{{ $channel->id }}">{{ $channel->name }}</option>
-                                    @endforeach
-                                </select>
-
-                                <span class="control-error" v-if="errors.has('channels[]')">@{{ errors.first('channels[]') }}</span>
-                            </div>
-
-                            <div class="control-group" :class="[errors.has('locales[]') ? 'has-error' : '']">
-                                <label for="url-key" class="required">{{ __('admin::app.cms.pages.locale') }}</label>
-
-                                <select type="text" class="control" name="locales[]" v-validate="'required'" value="{{ old('locale[]') }}" data-vv-as="&quot;{{ __('admin::app.cms.pages.locale') }}&quot;" multiple="multiple">
-                                    @foreach($locales->all() as $locale)
-                                        <option value="{{ $locale->id }}">{{ $locale->name }}</option>
-                                    @endforeach
-                                </select>
-
-                                <span class="control-error" v-if="errors.has('locales[]')">@{{ errors.first('locales[]') }}</span>
-                            </div>
-
-                            <div class="control-group" :class="[errors.has('html_content') ? 'has-error' : '']">
-                                <label for="html_content" class="required">{{ __('admin::app.cms.pages.content') }}</label>
-
-                                <textarea type="text" class="control" id="content" name="html_content" v-validate="'required'" value="{{ old('html_content') }}" data-vv-as="&quot;{{ __('admin::app.cms.pages.content') }}&quot;"></textarea>
-
-                                {!! __('admin::app.cms.pages.one-col') !!}
-                                {!! __('admin::app.cms.pages.two-col') !!}
-                                {!! __('admin::app.cms.pages.three-col') !!}
-
-                                <div class="mt-10 mb-10">
-                                    <a target="_blank" href="{{ route('ui.helper.classes') }}" class="btn btn-sm btn-primary">
-                                        {{ __('admin::app.cms.pages.helper-classes') }}
-                                    </a>
-                                </div>
-
-                                <span class="control-error" v-if="errors.has('html_content')">@{{ errors.first('html_content') }}</span>
-                            </div>
-                        </div>
-                    </accordian>
-
-                    <accordian :title="'{{ __('admin::app.cms.pages.seo') }}'" :active="true">
-                        <div slot="body">
-                            <div class="control-group" :class="[errors.has('meta_title') ? 'has-error' : '']">
-                                <label for="meta_title" class="required">{{ __('admin::app.cms.pages.meta_title') }}</label>
-
-                                <input type="text" class="control" name="meta_title" v-validate="'required'" value="{{ old('meta_title') }}" data-vv-as="&quot;{{ __('admin::app.cms.pages.meta_title') }}&quot;">
-
-                                <span class="control-error" v-if="errors.has('meta_title')">@{{ errors.first('meta_title') }}</span>
-                            </div>
-
-                            <div class="control-group" :class="[errors.has('meta_keywords') ? 'has-error' : '']">
-                                <label for="meta_keywords" class="required">{{ __('admin::app.cms.pages.meta_keywords') }}</label>
-
-                                <textarea type="text" class="control" name="meta_keywords" v-validate="'required'" value="{{ old('meta_keywords') }}" data-vv-as="&quot;{{ __('admin::app.cms.pages.meta_keywords') }}&quot;"></textarea>
-
-                                <span class="control-error" v-if="errors.has('meta_keywords')">@{{ errors.first('meta_keywords') }}</span>
-                            </div>
-
-                            <div class="control-group" :class="[errors.has('meta_description') ? 'has-error' : '']">
-                                <label for="meta_description">{{ __('admin::app.cms.pages.meta_description') }}</label>
-
-                                <textarea type="text" class="control" name="meta_description" value="{{ old('meta_description') }}" data-vv-as="&quot;{{ __('admin::app.cms.pages.meta_description') }}&quot;"></textarea>
-
-                                <span class="control-error" v-if="errors.has('meta_description')">@{{ errors.first('meta_description') }}</span>
-                            </div>
-                        </div>
-                    </accordian>
-                </div>
-            </div>
-        </form>
-    </div>
-
-    {{-- <modal id="showHelpers" :is-open="modalIds.showHelpers">
-        <h3 slot="header">{{ __('admin::app.cms.pages.helper-classes') }}</h3>
-
-        <div slot="body">
-            @include('ui::partials.helper-classes')
         </div>
-    </modal> --}}
-@stop
 
-@push('scripts')
-    <script src="{{ asset('vendor/webkul/admin/assets/js/tinyMCE/tinymce.min.js') }}"></script>
+        <!-- body content -->
+        <div class="mt-3.5 flex gap-2.5 max-xl:flex-wrap">
+            <!-- Left sub-component -->
+            <div class="flex flex-1 flex-col gap-2 max-xl:flex-auto">
 
-    <script>
-        $(document).ready(function () {
-            tinymce.init({
-                selector: 'textarea#content',
-                height: 200,
-                width: "70%",
-                plugins: 'image imagetools media wordcount save fullscreen code',
-                toolbar1: 'formatselect | bold italic strikethrough forecolor backcolor | link | alignleft aligncenter alignright alignjustify  | numlist bullist outdent indent  | removeformat | code',
-                image_advtab: true,
-                valid_elements : '*[*]'
-            });
-        });
-    </script>
-@endpush
+                {!! view_render_event('bagisto.admin.cms.pages.create.card.description.before') !!}
+
+                <!--Content -->
+                <div class="box-shadow rounded-sm bg-white p-4 dark:bg-gray-900">
+                    <p class="mb-4 text-base font-semibold text-gray-800 dark:text-white">
+                        @lang('admin::app.cms.create.description')
+                    </p>
+
+                    <!-- Html Content -->
+                    <x-admin::form.control-group class="mb-0!">
+                        <x-admin::form.control-group.label class="required">
+                            @lang('admin::app.cms.create.content')
+                        </x-admin::form.control-group.label>
+
+                        <x-admin::form.control-group.control
+                            type="textarea"
+                            id="content"
+                            name="html_content"
+                            rules="required"
+                            :value="old('html_content')"
+                            :label="trans('admin::app.cms.create.content')"
+                            :placeholder="trans('admin::app.cms.create.content')"
+                            :tinymce="true"
+                        />
+
+                        <x-admin::form.control-group.error control-name="html_content" />
+                    </x-admin::form.control-group>
+                </div>
+
+                {!! view_render_event('bagisto.admin.cms.pages.create.card.description.after') !!}
+
+                {!! view_render_event('bagisto.admin.cms.pages.create.card.seo.before') !!}
+
+                <!-- SEO Input Fields -->
+                <div class="box-shadow rounded-sm bg-white p-4 dark:bg-gray-900">
+                    <p class="mb-4 text-base font-semibold text-gray-800 dark:text-white">
+                        @lang('admin::app.cms.create.seo')
+                    </p>
+
+                    <!-- SEO Title & Description Blade Component -->
+                    <x-admin::seo
+                        slug="page"
+                        meta-title-field="meta_title"
+                        url-key-field="url_key"
+                        meta-description-field="meta_description"
+                    />
+
+                    <!-- Meta Title -->
+                    <x-admin::form.control-group>
+                        <x-admin::form.control-group.label>
+                            @lang('admin::app.cms.create.meta-title')
+                        </x-admin::form.control-group.label>
+
+                        <x-admin::form.control-group.control
+                            type="text"
+                            id="meta_title"
+                            name="meta_title"
+                            :value="old('meta_title')"
+                            :label="trans('admin::app.cms.create.meta-title')"
+                            :placeholder="trans('admin::app.cms.create.meta-title')"
+                        />
+
+                        <x-admin::form.control-group.error control-name="meta_title" />
+                    </x-admin::form.control-group>
+
+                    <!-- URL Key -->
+                    <x-admin::form.control-group>
+                        <x-admin::form.control-group.label class="required">
+                            @lang('admin::app.cms.create.url-key')
+                        </x-admin::form.control-group.label>
+
+                        <x-admin::form.control-group.control
+                            type="text"
+                            id="url_key"
+                            name="url_key"
+                            rules="required"
+                            :value="old('url_key')"
+                            :label="trans('admin::app.cms.create.url-key')"
+                            :placeholder="trans('admin::app.cms.create.url-key')"
+                        />
+
+                        <x-admin::form.control-group.error control-name="url_key" />
+                    </x-admin::form.control-group>
+
+                    <!-- Meta Keywords -->
+                    <x-admin::form.control-group>
+                        <x-admin::form.control-group.label>
+                            @lang('admin::app.cms.create.meta-keywords')
+                        </x-admin::form.control-group.label>
+
+                        <x-admin::form.control-group.control
+                            type="textarea"
+                            id="meta_keywords"
+                            name="meta_keywords"
+                            :value="old('meta_keywords')"
+                            :label="trans('admin::app.cms.create.meta-keywords')"
+                            :placeholder="trans('admin::app.cms.create.meta-keywords')"
+                        />
+
+                        <x-admin::form.control-group.error control-name="meta_keywords" />
+                    </x-admin::form.control-group>
+
+                    <!-- Meta Description -->
+                    <x-admin::form.control-group class="mb-0!">
+                        <x-admin::form.control-group.label>
+                            @lang('admin::app.cms.create.meta-description')
+                        </x-admin::form.control-group.label>
+
+                        <x-admin::form.control-group.control
+                            type="textarea"
+                            id="meta_description"
+                            name="meta_description"
+                            :value="old('meta_description')"
+                            :label="trans('admin::app.cms.create.meta-description')"
+                            :placeholder="trans('admin::app.cms.create.meta-description')"
+                        />
+
+                        <x-admin::form.control-group.error control-name="meta_description" />
+                    </x-admin::form.control-group>
+                </div>
+
+                {!! view_render_event('bagisto.admin.cms.pages.create.card.seo.after') !!}
+            </div>
+
+            <!-- Right sub-component -->
+            <div class="flex w-90 max-w-full flex-col gap-2 max-sm:w-full">
+                <!-- General -->
+
+                {!! view_render_event('bagisto.admin.cms.pages.create.card.accordion.general.before') !!}
+
+                <x-admin::accordion>
+                    <x-slot:header>
+                        <p class="p-2.5 text-base font-semibold text-gray-800 dark:text-white">
+                            @lang('admin::app.cms.create.general')
+                        </p>
+                    </x-slot>
+
+                    <x-slot:content>
+                        <!-- Page Title -->
+                        <x-admin::form.control-group>
+                            <x-admin::form.control-group.label class="required">
+                                @lang('admin::app.cms.create.page-title')
+                            </x-admin::form.control-group.label>
+
+                            <x-admin::form.control-group.control
+                                type="text"
+                                id="page_title"
+                                name="page_title"
+                                rules="required"
+                                :value="old('page_title')"
+                                :label="trans('admin::app.cms.create.page-title')"
+                                :placeholder="trans('admin::app.cms.create.page-title')"
+                            />
+
+                            <x-admin::form.control-group.error control-name="page_title" />
+                        </x-admin::form.control-group>
+
+                        <!-- Select Channels -->
+                        <x-admin::form.control-group.label class="required">
+                            @lang('admin::app.cms.create.channels')
+                        </x-admin::form.control-group.label>
+
+                        @foreach(core()->getAllChannels() as $channel)
+                            <x-admin::form.control-group class="mb-2! flex select-none items-center gap-2.5 last:mb-0!">
+                                <x-admin::form.control-group.control
+                                    type="checkbox"
+                                    :id="'channels_' . $channel->id"
+                                    name="channels[]"
+                                    rules="required"
+                                    :value="$channel->id"
+                                    :for="'channels_' . $channel->id"
+                                    :label="trans('admin::app.cms.create.channels')"
+                                />
+
+                                <label
+                                    class="cursor-pointer text-xs font-medium text-gray-600 dark:text-gray-300"
+                                    for="channels_{{ $channel->id }}"
+                                    v-pre
+                                >
+                                    {{ core()->getChannelName($channel) }}
+                                </label>
+                            </x-admin::form.control-group>
+                        @endforeach
+
+                        <x-admin::form.control-group.error control-name="channels[]" />
+                    </x-slot>
+                </x-admin::accordion>
+
+                {!! view_render_event('bagisto.admin.cms.pages.create.card.accordion.general.after') !!}
+
+            </div>
+        </div>
+
+        {!! view_render_event('bagisto.admin.cms.pages.create.create_form_controls.after') !!}
+
+    </x-admin::form>
+</x-admin::layouts>

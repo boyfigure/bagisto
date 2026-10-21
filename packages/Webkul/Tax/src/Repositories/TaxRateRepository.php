@@ -3,22 +3,15 @@
 namespace Webkul\Tax\Repositories;
 
 use Webkul\Core\Eloquent\Repository;
+use Webkul\Tax\Contracts\TaxRate;
 
-/**
- * Tax Rate Reposotory
- *
- * @author    Prashant Singh <prashant.singh852@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class TaxRateRepository extends Repository
 {
     /**
-     * Specify Model class name
-     *
-     * @return mixed
+     * Specify the model class name.
      */
-    function model()
+    public function model(): string
     {
-        return 'Webkul\Tax\Contracts\TaxRate';
+        return TaxRate::class;
     }
 }

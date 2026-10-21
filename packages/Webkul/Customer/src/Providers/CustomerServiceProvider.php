@@ -3,17 +3,33 @@
 namespace Webkul\Customer\Providers;
 
 use Illuminate\Support\ServiceProvider;
-use Illuminate\Routing\Router;
-use Webkul\Customer\Http\Middleware\RedirectIfNotCustomer;
+use Webkul\Customer\Facades\Captcha;
+use Webkul\Customer\Repositories\CustomerGroupRepository;
 
 class CustomerServiceProvider extends ServiceProvider
 {
-    public function boot(Router $router)
+    /**
+     * Register application services. The group repository is shared for the request so the
+     * guest group it memoizes is read once however many consumers ask for it.
+     */
+    public function register(): void
     {
-        $router->aliasMiddleware('customer', RedirectIfNotCustomer::class);
+        $this->app->scoped(CustomerGroupRepository::class);
+    }
 
-        $this->loadTranslationsFrom(__DIR__ . '/../Resources/lang', 'customer');
+    /**
+     * Bootstrap application services.
+     */
+    public function boot(): void
+    {
+        $this->loadMigrationsFrom(__DIR__.'/../Database/Migrations');
 
-        $this->loadMigrationsFrom(__DIR__ . '/../Database/Migrations');
+        $this->loadTranslationsFrom(__DIR__.'/../Resources/lang', 'customer');
+
+        $this->loadViewsFrom(__DIR__.'/../Resources/views', 'customer');
+
+        $this->app['validator']->extend('captcha', function ($attribute, $value, $parameters) {
+            return Captcha::getFacadeRoot()->validateResponse($value);
+        });
     }
 }

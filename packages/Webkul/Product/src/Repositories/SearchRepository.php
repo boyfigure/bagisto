@@ -2,50 +2,30 @@
 
 namespace Webkul\Product\Repositories;
 
-use Illuminate\Container\Container as App;
-use Webkul\Core\Eloquent\Repository;
-use Webkul\Product\Repositories\ProductRepository;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
+use Webkul\Core\Traits\Sanitizer;
 
-/**
- * Search Reposotory
- *
- * @author    Prashant Singh <prashant.singh852@webkul.com> @prashant-webkul
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
-class SearchRepository extends Repository
+class SearchRepository extends ProductRepository
 {
-    /**
-     * ProductRepository object
-     *
-     * @return Object
-     */
-    protected $productRepository;
+    use Sanitizer;
 
     /**
-     * Create a new repository instance.
+     * Upload provided image
      *
-     * @param  Webkul\Product\Repositories\ProductRepository $productRepository
-     * @return void
+     * @param  array  $data
+     * @return string
      */
-    public function __construct(
-        ProductRepository $productRepository,
-        App $app
-    )
+    public function uploadSearchImage($data)
     {
-        parent::__construct($app);
+        $path = request()->file('image')->store('product-search');
 
-        $this->productRepository = $productRepository;
-    }
+        if (! $this->sanitizeSVG($path, $data['image']->getMimeType())) {
+            throw ValidationException::withMessages([
+                'image' => trans('core::app.errors.invalid-svg'),
+            ]);
+        }
 
-    function model()
-    {
-        return 'Webkul\Product\Contracts\Product';
-    }
-
-    public function search($data)
-    {
-        $products = $this->productRepository->searchProductByAttribute($data['term']);
-
-        return $products;
+        return Storage::url($path);
     }
 }

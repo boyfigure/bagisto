@@ -2,43 +2,53 @@
 
 namespace Webkul\Shipping\Carriers;
 
-use Config;
 use Webkul\Checkout\Models\CartShippingRate;
-use Webkul\Shipping\Facades\Shipping;
 
-/**
- * Class Rate.
- *
- */
 class Free extends AbstractShipping
 {
     /**
-     * Payment method code
+     * Shipping method carrier code.
      *
      * @var string
      */
-    protected $code  = 'free';
+    protected $code = 'free';
 
     /**
-     * Returns rate for flatrate
+     * Shipping method code.
      *
-     * @return array
+     * @var string
+     */
+    protected $method = 'free_free';
+
+    /**
+     * Calculate rate for free shipping.
+     *
+     * @return CartShippingRate|false
      */
     public function calculate()
     {
-        if (! $this->isAvailable())
+        if (! $this->isAvailable()) {
             return false;
+        }
 
-        $object = new CartShippingRate;
+        return $this->getRate();
+    }
 
-        $object->carrier = 'free';
-        $object->carrier_title = $this->getConfigData('title');
-        $object->method = 'free_free';
-        $object->method_title = $this->getConfigData('title');
-        $object->method_description = $this->getConfigData('description');
-        $object->price = 0;
-        $object->base_price = 0;
+    /**
+     * Get rate.
+     */
+    public function getRate(): CartShippingRate
+    {
+        $cartShippingRate = new CartShippingRate;
 
-        return $object;
+        $cartShippingRate->carrier = $this->getCode();
+        $cartShippingRate->carrier_title = $this->getConfigData('title');
+        $cartShippingRate->method = $this->getMethod();
+        $cartShippingRate->method_title = $this->getConfigData('title');
+        $cartShippingRate->method_description = $this->getConfigData('description');
+        $cartShippingRate->price = 0;
+        $cartShippingRate->base_price = 0;
+
+        return $cartShippingRate;
     }
 }

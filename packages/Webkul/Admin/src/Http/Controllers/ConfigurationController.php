@@ -2,158 +2,124 @@
 
 namespace Webkul\Admin\Http\Controllers;
 
-use Illuminate\Support\Facades\Event;
-use Webkul\Core\Repositories\CoreConfigRepository;
-use Webkul\Core\Tree;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\View\View;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+use Webkul\Admin\Http\Requests\ConfigurationForm;
+use Webkul\Core\Repositories\CoreConfigRepository;
 
-/**
- * Configuration controller
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class ConfigurationController extends Controller
 {
     /**
-     * Display a listing of the resource.
-     *
-     * @return \Illuminate\Http\Response
-     */
-    protected $_config;
-
-    /**
-     * CoreConfigRepository object
-     *
-     * @var array
-     */
-    protected $coreConfigRepository;
-
-    /**
-     *
-     * @var array
-     */
-    protected $configTree;
-
-    /**
      * Create a new controller instance.
-     *
-     * @param  \Webkul\Core\Repositories\CoreConfigRepository $coreConfigRepository
-     * @return void
      */
-    public function __construct(CoreConfigRepository $coreConfigRepository)
+    public function __construct(protected CoreConfigRepository $coreConfigRepository) {}
+
+    /**
+     * Display every configuration section, or the fields of the requested one.
+     */
+    public function index(): View
     {
-        $this->middleware('admin');
+        if (
+            request()->route('slug')
+            && request()->route('slug2')
+        ) {
+            abort_if(! system_config()->getActiveConfigurationItem(), 404);
 
-        $this->coreConfigRepository = $coreConfigRepository;
+            return view('admin::configuration.edit');
+        }
 
-        $this->_config = request('_config');
-
-        $this->prepareConfigTree();
-
+        return view('admin::configuration.index');
     }
 
     /**
-     * Prepares config tree
-     *
-     * @return void
+     * Search the configuration fields for the given term.
      */
-    public function prepareConfigTree()
+    public function search(): JsonResponse
     {
-        $tree = Tree::create();
+        $searchTerm = request()->query('query');
 
-        foreach (config('core') as $item) {
-            $tree->add($item);
+        if (
+            ! is_string($searchTerm)
+            || $searchTerm === ''
+        ) {
+            abort(404);
         }
 
-        $tree->items = core()->sortItems($tree->items);
+        $results = $this->coreConfigRepository->search(
+            system_config()->getItems(),
+            $searchTerm
+        );
 
-        $this->configTree = $tree;
-    }
-
-    /**
-     * Display a listing of the resource.
-     *
-     * @return \Illuminate\View\View
-     */
-    public function index()
-    {
-        $slugs = $this->getDefaultConfigSlugs();
-
-        if (count($slugs)) {
-            return redirect()->route('admin.configuration.index', $slugs);
-        }
-
-        return view($this->_config['view'], ['config' => $this->configTree]);
-    }
-
-    /**
-     * Returns slugs
-     *
-     * @return array
-     */
-    public function getDefaultConfigSlugs()
-    {
-        if (! request()->route('slug')) {
-            $firstItem = current($this->configTree->items);
-            $secondItem = current($firstItem['children']);
-
-            return $this->getSlugs($secondItem);
-        }
-
-        if (! request()->route('slug2')) {
-            $secondItem = current($this->configTree->items[request()->route('slug')]['children']);
-
-            return $this->getSlugs($secondItem);
-        }
-
-        return [];
+        return new JsonResponse([
+            'data' => $results,
+        ]);
     }
 
     /**
      * Store a newly created resource in storage.
-     *
-     * @param  \Webkul\Admin\Http\Requests\ConfigurationForm $request
-     * @return \Illuminate\Http\Response
      */
-    public function store()
+    public function store(ConfigurationForm $request): RedirectResponse
     {
-        Event::fire('core.configuration.save.before');
+        $data = $request->all();
 
-        $this->coreConfigRepository->create(request()->all());
+        if (isset($data['sales']['carriers'])) {
+            $atLeastOneCarrierEnabled = false;
 
-        Event::fire('core.configuration.save.after');
+            foreach ($data['sales']['carriers'] as $carrier) {
+                if ($carrier['active']) {
+                    $atLeastOneCarrierEnabled = true;
 
-        session()->flash('success', trans('admin::app.configuration.save-message'));
+                    break;
+                }
+            }
+
+            if (! $atLeastOneCarrierEnabled) {
+                session()->flash('error', trans('admin::app.configuration.index.enable-at-least-one-shipping'));
+
+                return redirect()->back();
+            }
+        } elseif (isset($data['sales']['payment_methods'])) {
+            $atLeastOnePaymentMethodEnabled = false;
+
+            foreach ($data['sales']['payment_methods'] as $paymentMethod) {
+                if ($paymentMethod['active']) {
+                    $atLeastOnePaymentMethodEnabled = true;
+
+                    break;
+                }
+            }
+
+            if (! $atLeastOnePaymentMethodEnabled) {
+                session()->flash('error', trans('admin::app.configuration.index.enable-at-least-one-payment'));
+
+                return redirect()->back();
+            }
+        }
+
+        $this->coreConfigRepository->create($request->except(['_token', 'admin_locale']));
+
+        session()->flash('success', trans('admin::app.configuration.index.save-message'));
 
         return redirect()->back();
     }
 
     /**
-     * download the file for the specified resource.
-     *
-     * @return \Illuminate\Http\Response
+     * Download a file uploaded through a configuration field.
      */
-    public function download()
+    public function download(): StreamedResponse
     {
-        $path = request()->route()->parameters()['path'];
+        $config = $this->coreConfigRepository->findOneByField('value', 'configurations/'.request()->route('path'));
 
-        $fileName = 'configuration/'. $path;
+        if (
+            ! $config
+            || ! Storage::exists($config->value)
+        ) {
+            abort(404);
+        }
 
-        $config = $this->coreConfigRepository->findOneByField('value', $fileName);
-
-        return Storage::download($config['value']);
-    }
-
-    /**
-     * @param $secondItem
-     *
-     * @return array
-     */
-    private function getSlugs($secondItem): array
-    {
-        $temp = explode('.', $secondItem['key']);
-
-        return ['slug' => current($temp), 'slug2' => end($temp)];
+        return Storage::download($config->value);
     }
 }

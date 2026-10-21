@@ -2,23 +2,16 @@
 
 namespace Webkul\Core\Repositories;
 
+use Webkul\Core\Contracts\Country;
 use Webkul\Core\Eloquent\Repository;
 
-/**
- * Country Reposotory
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class CountryRepository extends Repository
 {
     /**
-     * Specify Model class name
-     *
-     * @return mixed
+     * Specify the model class name.
      */
-    function model()
+    public function model(): string
     {
-        return 'Webkul\Core\Contracts\Country';
+        return Country::class;
     }
 }

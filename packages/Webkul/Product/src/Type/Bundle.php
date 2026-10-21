@@ -3,258 +3,176 @@
 namespace Webkul\Product\Type;
 
 use Webkul\Attribute\Repositories\AttributeRepository;
-use Webkul\Product\Repositories\ProductRepository;
-use Webkul\Product\Repositories\ProductAttributeValueRepository;
-use Webkul\Product\Repositories\ProductInventoryRepository;
-use Webkul\Product\Repositories\ProductImageRepository;
-use Webkul\Product\Repositories\ProductBundleOptionRepository;
-use Webkul\Product\Repositories\ProductBundleOptionProductRepository;
-use Webkul\Product\Helpers\ProductImage;
+use Webkul\Checkout\Contracts\CartItem;
+use Webkul\Customer\Repositories\CustomerRepository;
+use Webkul\Product\Contracts\Product;
+use Webkul\Product\DataTypes\CartItemValidationResult;
+use Webkul\Product\Exceptions\InsufficientProductInventoryException;
 use Webkul\Product\Helpers\BundleOption;
+use Webkul\Product\Helpers\Indexers\Price\Bundle as BundleIndexer;
+use Webkul\Product\Repositories\ProductAttributeValueRepository;
+use Webkul\Product\Repositories\ProductBundleOptionProductRepository;
+use Webkul\Product\Repositories\ProductBundleOptionRepository;
+use Webkul\Product\Repositories\ProductCustomerGroupPriceRepository;
+use Webkul\Product\Repositories\ProductImageRepository;
+use Webkul\Product\Repositories\ProductInventoryRepository;
+use Webkul\Product\Repositories\ProductRepository;
+use Webkul\Product\Repositories\ProductVideoRepository;
+use Webkul\Tax\Facades\Tax;
 
-/**
- * Class Bundle.
- *
- * @author    Jitendra Singh <jitendra@webkul.com>
- * @copyright 2018 Webkul Software Pvt Ltd (http://www.webkul.com)
- */
 class Bundle extends AbstractType
 {
     /**
-     * ProductBundleOptionRepository instance
-     *
-     * @var ProductBundleOptionRepository
-     */
-    protected $productBundleOptionRepository;
-
-    /**
-     * ProductBundleOptionProductRepository instance
-     *
-     * @var ProductBundleOptionProductRepository
-     */
-    protected $productBundleOptionProductRepository;
-
-    /**
-     * Bundle Option helper instance
-     * 
-     * @var BundleOption
-    */
-    protected $bundleOptionHelper;
-
-    /**
-     * Skip attribute for Bundle product type
+     * Skip attribute for Bundle product type.
      *
      * @var array
      */
-    protected $skipAttributes = ['price', 'cost', 'special_price', 'special_price_from', 'special_price_to', 'width', 'height', 'depth', 'weight'];
-
-    /**
-     * These blade files will be included in product edit page
-     * 
-     * @var array
-     */
-    protected $additionalViews = [
-        'admin::catalog.products.accordians.images',
-        'admin::catalog.products.accordians.categories',
-        'admin::catalog.products.accordians.bundle-items',
-        'admin::catalog.products.accordians.product-links'
+    protected $skipAttributes = [
+        'price',
+        'cost',
+        'special_price',
+        'special_price_from',
+        'special_price_to',
+        'length',
+        'width',
+        'height',
+        'weight',
+        'depth',
+        'manage_stock',
     ];
 
     /**
-     * Is a composite product type
+     * Is a composite product type.
      *
-     * @var boolean
+     * @var bool
      */
     protected $isComposite = true;
 
     /**
+     * Product children price can be calculated or not.
+     *
+     * @var bool
+     */
+    protected $isChildrenCalculated = true;
+
+    /**
+     * Show quantity box.
+     *
+     * @var bool
+     */
+    protected $showQuantityBox = true;
+
+    /**
+     * Product can be added to cart with options or not.
+     *
+     * @var bool
+     */
+    protected $canBeAddedToCartWithoutOptions = false;
+
+    /**
      * Create a new product type instance.
      *
-     * @param  Webkul\Attribute\Repositories\AttributeRepository                $attributeRepository
-     * @param  Webkul\Product\Repositories\ProductRepository                    $productRepository
-     * @param  Webkul\Product\Repositories\ProductAttributeValueRepository      $attributeValueRepository
-     * @param  Webkul\Product\Repositories\ProductInventoryRepository           $productInventoryRepository
-     * @param  Webkul\Product\Repositories\ProductImageRepository               $productImageRepository
-     * @param  Webkul\Product\Repositories\ProductBundleOptionRepository        $productBundleOptionRepository
-     * @param  Webkul\Product\Repositories\ProductBundleOptionProductRepository $productBundleOptionProductRepository
-     * @param  Webkul\Product\Helpers\ProductImage                              $productImageHelper
-     * @param  Webkul\Product\Helpers\BundleOption                              $bundleOptionHelper
      * @return void
      */
     public function __construct(
+        CustomerRepository $customerRepository,
         AttributeRepository $attributeRepository,
         ProductRepository $productRepository,
         ProductAttributeValueRepository $attributeValueRepository,
         ProductInventoryRepository $productInventoryRepository,
-        productImageRepository $productImageRepository,
-        ProductBundleOptionRepository $productBundleOptionRepository,
-        ProductBundleOptionProductRepository $productBundleOptionProductRepository,
-        ProductImage $productImageHelper,
-        BundleOption $bundleOptionHelper
-    )
-    {
+        ProductImageRepository $productImageRepository,
+        ProductVideoRepository $productVideoRepository,
+        ProductCustomerGroupPriceRepository $productCustomerGroupPriceRepository,
+        protected ProductBundleOptionRepository $productBundleOptionRepository,
+        protected ProductBundleOptionProductRepository $productBundleOptionProductRepository,
+        protected BundleOption $bundleOptionHelper
+    ) {
         parent::__construct(
+            $customerRepository,
             $attributeRepository,
             $productRepository,
             $attributeValueRepository,
             $productInventoryRepository,
             $productImageRepository,
-            $productImageHelper
+            $productVideoRepository,
+            $productCustomerGroupPriceRepository
         );
-
-        $this->productBundleOptionRepository = $productBundleOptionRepository;
-
-        $this->productBundleOptionProductRepository = $productBundleOptionProductRepository;
-
-        $this->bundleOptionHelper = $bundleOptionHelper;
     }
 
     /**
-     * @param array $data
-     * @param $id
-     * @param string $attribute
+     * Update.
+     *
+     * @param  int  $id
+     * @param  array  $attributes
      * @return Product
      */
-    public function update(array $data, $id, $attribute = "id")
+    public function update(array $data, $id, $attributes = [])
     {
-        $product = parent::update($data, $id, $attribute);
+        $product = parent::update($data, $id, $attributes);
 
-        if (request()->route()->getName() != 'admin.catalog.products.massupdate')
-            $this->productBundleOptionRepository->saveBundleOptons($data, $product);
+        if (! empty($attributes)) {
+            return $product;
+        }
+
+        $this->productBundleOptionRepository->saveBundleOptions($data, $product);
 
         return $product;
     }
 
     /**
-     * Get product minimal price
+     * Copy relationships.
      *
-     * @return float
+     * @param  \Webkul\Product\Models\Product  $product
+     * @return void
      */
-    public function getMinimalPrice()
+    protected function copyRelationships($product)
     {
-        $optionPrices = [];
+        parent::copyRelationships($product);
 
-        foreach ($this->product->bundle_options as $option) {
-            if(! $option->is_required)
-                continue;
+        $attributesToSkip = config('products.copy.skip_attributes') ?? [];
 
-            foreach ($option->bundle_option_products as $index => $bundleOptionProduct) {
-                $optionPrices[$option->id][] = $bundleOptionProduct->qty * $bundleOptionProduct->product->getTypeInstance()->getMinimalPrice();
-            }
+        if (in_array('bundle_options', $attributesToSkip)) {
+            return;
         }
 
-        $minPrice = 0;
-
-        foreach ($optionPrices as $key => $optionPrice) {
-            $minPrice += min($optionPrice);
+        foreach ($this->product->bundle_options as $bundleOption) {
+            $product->bundle_options()->save($bundleOption->replicate());
         }
-
-        return $minPrice;
     }
 
     /**
-     * Get product regular minimal price
+     * Returns children ids.
      *
-     * @return float
+     * @return array
      */
-    public function getRegularMinimalPrice()
+    public function getChildrenIds()
     {
-        $optionPrices = [];
-
-        foreach ($this->product->bundle_options as $option) {
-            if(! $option->is_required)
-                continue;
-
-            foreach ($option->bundle_option_products as $index => $bundleOptionProduct) {
-                $optionPrices[$option->id][] = $bundleOptionProduct->qty * $bundleOptionProduct->product->price;
-            }
-        }
-
-        $minPrice = 0;
-
-        foreach ($optionPrices as $key => $optionPrice) {
-            $minPrice += min($optionPrice);
-        }
-
-        return $minPrice;
+        return array_unique($this->product->bundle_options()->pluck('product_id')->toArray());
     }
 
     /**
-     * Get product maximam price
+     * Check if catalog rule can be applied.
      *
-     * @return float
+     * @return bool
      */
-    public function getMaximamPrice()
+    public function priceRuleCanBeApplied()
     {
-        $optionPrices = [];
-
-        foreach ($this->product->bundle_options as $option) {
-            foreach ($option->bundle_option_products as $index => $bundleOptionProduct) {
-                if (in_array($option->type, ['multiselect', 'checkbox'])) {
-                    if (! isset($optionPrices[$option->id][0]))
-                        $optionPrices[$option->id][0] = 0;
-
-                    $optionPrices[$option->id][0] += $bundleOptionProduct->qty * $bundleOptionProduct->product->getTypeInstance()->getMinimalPrice();
-                } else {
-                    $optionPrices[$option->id][] = $bundleOptionProduct->qty * $bundleOptionProduct->product->getTypeInstance()->getMinimalPrice();
-                }
-
-            }
-        }
-
-        $maxPrice = 0;
-
-        foreach ($optionPrices as $key => $optionPrice) {
-            $maxPrice += max($optionPrice);
-        }
-
-        return $maxPrice;
+        return false;
     }
 
     /**
-     * Get product regular maximam price
+     * Get product minimal price.
      *
+     * @param  int  $qty
      * @return float
      */
-    public function getRegularMaximamPrice()
+    public function getFinalPrice($qty = null)
     {
-        $optionPrices = [];
-
-        foreach ($this->product->bundle_options as $option) {
-            foreach ($option->bundle_option_products as $index => $bundleOptionProduct) {
-                if (in_array($option->type, ['multiselect', 'checkbox'])) {
-                    if (! isset($optionPrices[$option->id][0]))
-                        $optionPrices[$option->id][0] = 0;
-
-                    $optionPrices[$option->id][0] += $bundleOptionProduct->qty * $bundleOptionProduct->product->price;
-                } else {
-                    $optionPrices[$option->id][] = $bundleOptionProduct->qty * $bundleOptionProduct->product->price;
-                }
-
-            }
-        }
-
-        $maxPrice = 0;
-
-        foreach ($optionPrices as $key => $optionPrice) {
-            $maxPrice += max($optionPrice);
-        }
-
-        return $maxPrice;
+        return round(0, 2);
     }
 
     /**
-     * Get product final price
-     *
-     * @return float
-     */
-    public function getFinalPrice()
-    {
-        return 0;
-    }
-
-    /**
-     * Returns product prices
+     * Returns product prices.
      *
      * @return array
      */
@@ -262,93 +180,120 @@ class Bundle extends AbstractType
     {
         return [
             'from' => [
-                'regular_price' => [
-                    'price' => core()->convertPrice($this->getRegularMinimalPrice()),
-                    'formated_price' => core()->currency($this->getRegularMinimalPrice())
+                'regular' => [
+                    'price' => core()->convertPrice($regularMinimalPrice = $this->getRegularMinimalPrice()),
+                    'formatted_price' => core()->currency($regularMinimalPrice),
                 ],
-                'final_price' => [
-                    'price' => core()->convertPrice($this->getMinimalPrice()),
-                    'formated_price' => core()->currency($this->getMinimalPrice())
-                ]
+
+                'final' => [
+                    'price' => core()->convertPrice($minimalPrice = $this->getMinimalPrice()),
+                    'formatted_price' => core()->currency($minimalPrice),
+                ],
             ],
+
             'to' => [
-                'regular_price' => [
-                    'price' => core()->convertPrice($this->getRegularMaximamPrice()),
-                    'formated_price' => core()->currency($this->getRegularMaximamPrice())
+                'regular' => [
+                    'price' => core()->convertPrice($regularMaximumPrice = $this->getRegularMaximumPrice()),
+                    'formatted_price' => core()->currency($regularMaximumPrice),
                 ],
-                'final_price' => [
-                    'price' => core()->convertPrice($this->getMaximamPrice()),
-                    'formated_price' => core()->currency($this->getMaximamPrice())
-                ]
-            ]
+
+                'final' => [
+                    'price' => core()->convertPrice($maximumPrice = $this->getMaximumPrice()),
+                    'formatted_price' => core()->currency($maximumPrice),
+                ],
+            ],
         ];
     }
 
     /**
-     * Get product minimal price
+     * Get product minimal price.
      *
      * @return string
      */
     public function getPriceHtml()
     {
-        $prices = $this->getProductPrices();
-
-        $priceHtml = '<div class="price-from">';
-
-        if ($prices['from']['regular_price']['price'] != $prices['from']['final_price']['price']) {
-            $priceHtml .= '<span class="regular-price">' . $prices['from']['regular_price']['formated_price'] . '</span>'
-                        . '<span class="special-price">' . $prices['from']['final_price']['formated_price'] . '</span>';
-        } else {
-            $priceHtml .= '<span>' . $prices['from']['regular_price']['formated_price'] . '</span>';
-        }
-
-        $priceHtml .= '<span style="font-weight: 500;margin-top: 1px;margin-bottom: 1px;display: block;">To</span>';
-
-        if ($prices['to']['regular_price']['price'] != $prices['to']['final_price']['price']) {
-            $priceHtml .= '<span class="regular-price">' . $prices['to']['regular_price']['formated_price'] . '</span>'
-                        . '<span class="special-price">' . $prices['to']['final_price']['formated_price'] . '</span>';
-        } else {
-            $priceHtml .= '<span>' . $prices['to']['regular_price']['formated_price'] . '</span>';
-        }
-
-        $priceHtml .= '</div>';
-
-        return $priceHtml;
+        return view('shop::products.prices.bundle', [
+            'product' => $this->product,
+            'prices' => $this->getProductPrices(),
+        ])->render();
     }
 
     /**
      * Add product. Returns error message if can't prepare product.
      *
-     * @param array   $data
-     * @return array
+     * @param  array  $data
+     * @return array|string
+     *
+     * @throws InsufficientProductInventoryException
      */
     public function prepareForCart($data)
     {
-        if (! isset($data['bundle_options']))
-            return trans('shop::app.checkout.cart.integrity.missing_options');
-        
+        $bundleQuantity = parent::handleQuantity((int) ($data['quantity'] ?? 1));
+
+        if (empty($data['bundle_options'])) {
+            return trans('product::app.checkout.cart.missing-options');
+        }
+
+        $data['bundle_options'] = array_filter($this->validateBundleOptionForCart(
+            $this->ownBundleOptions($data['bundle_options'])
+        ));
+
+        if (empty($data['bundle_options'])) {
+            return trans('product::app.checkout.cart.missing-options');
+        }
+
+        if (! $this->haveSufficientQuantity($data['quantity'])) {
+            throw new InsufficientProductInventoryException(trans('product::app.checkout.cart.inventory-warning'));
+        }
+
         $products = parent::prepareForCart($data);
+
+        if (gettype($products) == 'string') {
+            return $products;
+        }
 
         foreach ($this->getCartChildProducts($data) as $productId => $data) {
             $product = $this->productRepository->find($productId);
 
-            $cartProduct = $product->getTypeInstance()->prepareForCart(array_merge($data, ['parent_id' => $this->product->id]));
+            if ($product->type !== 'simple') {
+                return trans('product::app.checkout.cart.selected-products-simple');
+            }
 
-            if (is_string($cartProduct))
+            /* need to check each individual quantity as well if don't have then show error */
+            if (! $product->getTypeInstance()->haveSufficientQuantity($data['quantity'] * $bundleQuantity)) {
+                throw new InsufficientProductInventoryException(trans('product::app.checkout.cart.inventory-warning'));
+            }
+
+            if (! $product->getTypeInstance()->isSaleable()) {
+                continue;
+            }
+
+            $cartProduct = $product->getTypeInstance()->prepareForCart(array_merge($data, [
+                'parent_id' => $this->product->id,
+            ]));
+
+            if (is_string($cartProduct)) {
                 return $cartProduct;
+            }
 
             $cartProduct[0]['parent_id'] = $this->product->id;
 
             $products = array_merge($products, $cartProduct);
 
             $products[0]['price'] += $cartProduct[0]['total'];
+            $products[0]['price_incl_tax'] += $cartProduct[0]['total'];
             $products[0]['base_price'] += $cartProduct[0]['base_total'];
+            $products[0]['base_price_incl_tax'] += $cartProduct[0]['base_total'];
             $products[0]['total'] += $cartProduct[0]['total'];
+            $products[0]['total_incl_tax'] += $cartProduct[0]['total'];
             $products[0]['base_total'] += $cartProduct[0]['base_total'];
-            $products[0]['weight'] += $cartProduct[0]['weight'];
-            $products[0]['total_weight'] += $cartProduct[0]['total_weight'];
-            $products[0]['base_total_weight'] += $cartProduct[0]['base_total_weight'];
+            $products[0]['base_total_incl_tax'] += $cartProduct[0]['base_total'];
+            $products[0]['weight'] += $cartProduct[0]['total_weight'];
         }
+
+        $products[0]['total_weight'] = $products[0]['base_total_weight'] = $products[0]['weight'] * $products[0]['quantity'];
+
+        $products[0]['total'] = $products[0]['base_total'] = $products[0]['base_total'] * $products[0]['quantity'];
 
         return $products;
     }
@@ -356,7 +301,7 @@ class Bundle extends AbstractType
     /**
      * Add product. Returns error message if can't prepare product.
      *
-     * @param array   $data
+     * @param  array  $data
      * @return array
      */
     public function getCartChildProducts($data)
@@ -365,72 +310,140 @@ class Bundle extends AbstractType
 
         foreach ($data['bundle_options'] as $optionId => $optionProductIds) {
             foreach ($optionProductIds as $optionProductId) {
-                if (! $optionProductId)
+                if (! $optionProductId) {
                     continue;
+                }
 
                 $optionProduct = $this->productBundleOptionProductRepository->findOneWhere([
-                        'id' => $optionProductId,
-                        'product_bundle_option_id' => $optionId
-                    ]);
+                    'id' => $optionProductId,
+                    'product_bundle_option_id' => $optionId,
+                ]);
 
-                $qty = $data['bundle_option_qty'][$optionId] ?? $optionProduct->qty;
+                if (! $optionProduct?->product->getTypeInstance()->isSaleable()) {
+                    continue;
+                }
+
+                $qty = $optionProduct->is_user_defined
+                    ? ($data['bundle_option_qty'][$optionId] ?? $optionProduct->qty)
+                    : $optionProduct->qty;
 
                 if (! isset($products[$optionProduct->product_id])) {
                     $products[$optionProduct->product_id] = [
-                            'product_id' => $optionProduct->product_id,
-                            'quantity' => $qty,
-                        ];
+                        'product_id' => $optionProduct->product_id,
+                        'quantity' => $qty,
+                    ];
                 } else {
                     $products[$optionProduct->product_id] = array_merge($products[$optionProduct->product_id], [
-                            'quantity' => $products[$optionProduct->product_id]['quantity'] + $qty
-                        ]);
+                        'quantity' => $products[$optionProduct->product_id]['quantity'] + $qty,
+                    ]);
                 }
             }
         }
 
         return $products;
     }
-    
+
     /**
+     * Compare options.
      *
-     * @param array $options1
-     * @param array $options2
-     * @return boolean
+     * @param  array  $options1
+     * @param  array  $options2
+     * @return bool
      */
     public function compareOptions($options1, $options2)
     {
-        if ($this->product->id != $options2['product_id'])
-            return false;
+        if (
+            isset($options1['bundle_options'])
+            && isset($options2['bundle_options'])
+        ) {
+            return $options1['bundle_options'] == $options2['bundle_options']
+                && $options1['bundle_option_qty'] == $this->getOptionQuantities($options2);
+        }
 
-        return $options1['bundle_options'] == $options2['bundle_options'];
+        return false;
     }
 
     /**
-     * Returns additional information for items
+     * The posted options this product actually owns, so a selection cannot be priced by an
+     * option belonging to another bundle.
+     */
+    public function ownBundleOptions(array $bundleOptions): array
+    {
+        $ownIds = $this->product->bundle_options->pluck('id')->all();
+
+        return array_filter(
+            $bundleOptions,
+            fn ($optionId) => in_array((int) $optionId, $ownIds, true),
+            ARRAY_FILTER_USE_KEY
+        );
+    }
+
+    /**
+     * Remove invalid options from add to cart request.
      *
-     * @param array $data
+     * @param  array  $data
+     */
+    public function validateBundleOptionForCart($data)
+    {
+        foreach ($data as $key => $value) {
+            if (is_array($value)) {
+                $data[$key] = $this->validateBundleOptionForCart($value);
+            } elseif ($value) {
+                $data[$key] = (int) $value;
+            } else {
+                unset($data[$key]);
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * Returns additional information for items.
+     *
+     * @param  array  $data
      * @return array
      */
     public function getAdditionalOptions($data)
     {
-        foreach ($data['bundle_options'] as $optionId => $optionProductIds) {
-            $option = $this->productBundleOptionRepository->find($optionId);
+        $bundleOptionQuantities = $data['bundle_option_qty'] ?? [];
 
+        $productBundleOptions = $this->productBundleOptionRepository
+            ->whereIn('id', array_keys($data['bundle_options']))
+            ->orderBy('sort_order')
+            ->get();
+
+        $data['attributes'] = [];
+
+        foreach ($productBundleOptions as $option) {
             $labels = [];
 
-            foreach ($optionProductIds as $optionProductId) {
-                if (! $optionProductId)
+            foreach ($data['bundle_options'][$option->id] as $optionProductId) {
+                if (! $optionProductId) {
                     continue;
+                }
 
                 $optionProduct = $this->productBundleOptionProductRepository->find($optionProductId);
 
-                $qty = $data['bundle_option_qty'][$optionId] ?? $optionProduct->qty;
-                
-                $labels[] = $qty . ' x ' . $optionProduct->product->name . ' ' . core()->currency($optionProduct->product->getTypeInstance()->getMinimalPrice());
+                $qty = $data['bundle_option_qty'][$option->id] ?? $optionProduct->qty;
+
+                if (! isset($data['bundle_option_qty'][$option->id])) {
+                    $bundleOptionQuantities[$option->id] = $qty;
+                }
+
+                $label = $qty.' x '.$optionProduct->product->name;
+
+                $price = $optionProduct->product->getTypeInstance()->getMinimalPrice();
+
+                if ($price != 0) {
+                    $label .= ' '.core()->currency($price);
+                }
+
+                $labels[] = $label;
             }
 
             if (count($labels)) {
-                $data['attributes'][$option->id] = [
+                $data['attributes'][] = [
                     'attribute_name' => $option->label,
                     'option_id' => $option->id,
                     'option_label' => implode(', ', $labels),
@@ -438,6 +451,169 @@ class Bundle extends AbstractType
             }
         }
 
+        $data['bundle_option_qty'] = $bundleOptionQuantities;
+
         return $data;
+    }
+
+    /**
+     * Returns additional information for items.
+     *
+     * @param  array  $data
+     * @return array
+     */
+    public function getOptionQuantities($data)
+    {
+        $optionQuantities = [];
+
+        foreach ($data['bundle_options'] as $optionId => $optionProductIds) {
+            foreach ($optionProductIds as $optionProductId) {
+                if (! $optionProductId) {
+                    continue;
+                }
+
+                if (isset($data['bundle_option_qty'][$optionId])) {
+                    $optionQuantities[$optionId] = $data['bundle_option_qty'][$optionId];
+
+                    continue;
+                }
+
+                $optionProduct = $this->productBundleOptionProductRepository->find($optionProductId);
+
+                $optionQuantities[$optionId] = $optionProduct->qty;
+            }
+        }
+
+        return $optionQuantities;
+    }
+
+    /**
+     * Validate cart item product price and other things.
+     */
+    public function validateCartItem(CartItem $item): CartItemValidationResult
+    {
+        $validation = new CartItemValidationResult;
+
+        if (parent::isCartItemInactive($item)) {
+            $validation->itemIsInactive();
+
+            return $validation;
+        }
+
+        $basePrice = 0;
+
+        foreach ($item->children as $childItem) {
+            $childValidation = $childItem->getTypeInstance()->validateCartItem($childItem);
+
+            if ($childValidation->isItemInactive()) {
+                $validation->itemIsInactive();
+            }
+
+            if ($childValidation->isCartInvalid()) {
+                $validation->cartIsInvalid();
+            }
+
+            $basePrice += $childItem->base_price * $childItem->quantity;
+        }
+
+        $basePrice = round($basePrice, 4);
+
+        if (Tax::isInclusiveTaxProductPrices()) {
+            $itemBasePrice = $item->base_price_incl_tax;
+        } else {
+            $itemBasePrice = $item->base_price;
+        }
+
+        if ($basePrice == $itemBasePrice) {
+            return $validation;
+        }
+
+        $item->base_price = $basePrice;
+        $item->base_price_incl_tax = $basePrice;
+
+        $item->price = ($price = core()->convertPrice($basePrice));
+        $item->price_incl_tax = $price;
+
+        $item->base_total = $basePrice * $item->quantity;
+        $item->base_total_incl_tax = $basePrice * $item->quantity;
+
+        $item->total = ($total = core()->convertPrice($basePrice * $item->quantity));
+        $item->total_incl_tax = $total;
+
+        $item->additional = $this->getAdditionalOptions($item->additional);
+
+        $item->save();
+
+        return $validation;
+    }
+
+    /**
+     * Have sufficient quantity.
+     */
+    public function haveSufficientQuantity(int $qty): bool
+    {
+        foreach ($this->product->bundle_options as $option) {
+            if (
+                $option->is_required
+                && ! $this->hasStockedOptionProduct($option, $qty)
+            ) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Returns the price indexer class for this product type.
+     *
+     * @return string
+     */
+    public function getPriceIndexer()
+    {
+        return app(BundleIndexer::class);
+    }
+
+    /**
+     * Returns validation rules.
+     *
+     * @return array
+     */
+    public function getTypeValidationRules()
+    {
+        return [
+            'bundle_options' => 'array',
+            'bundle_options' => function ($attribute, $value, $fail) {
+                $associatedProductIds = collect($value)
+                    ->pluck('products')
+                    ->flatten(1)
+                    ->pluck('product_id')
+                    ->toArray();
+
+                $products = $this->productRepository->findWhereIn('id', $associatedProductIds)
+                    ->pluck('type')
+                    ->filter(fn ($type) => $type !== 'simple')
+                    ->count();
+
+                if ($products) {
+                    $fail(trans('product::app.checkout.cart.selected-products-simple'));
+                }
+            },
+        ];
+    }
+
+    /**
+     * Whether any one product in a bundle option can cover the quantity the bundle asks of it,
+     * which is all a required option needs for the bundle itself to be in stock.
+     */
+    protected function hasStockedOptionProduct($option, int $qty): bool
+    {
+        foreach ($option->bundle_option_products as $bundleOptionProduct) {
+            if ($bundleOptionProduct->product->haveSufficientQuantity($bundleOptionProduct->qty * $qty)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
